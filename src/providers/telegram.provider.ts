@@ -1,0 +1,29 @@
+import axios from 'axios';
+import { IMessengerProvider, OfferPayload } from '../types';
+
+export class TelegramProvider implements IMessengerProvider {
+  private readonly botToken: string;
+  private readonly chatId: string;
+
+  constructor() {
+    this.botToken = process.env.TELEGRAM_BOT_TOKEN || '';
+    this.chatId = process.env.TELEGRAM_CHAT_ID || '';
+  }
+
+  async sendOffer(payload: OfferPayload): Promise<void> {
+    if (!this.botToken || !this.chatId) {
+      throw new Error('Credenciais do Telegram não foram configuradas no .env');
+    }
+
+    const url = `https://api.telegram.org/bot${this.botToken}/sendPhoto`;
+
+    const fullCaption = `${payload.caption}\n\n🛒 <b>Compre aqui:</b> <a href="${payload.affiliateUrl}">Acessar Oferta</a>`;
+
+    await axios.post(url, {
+      chat_id: this.chatId,
+      photo: payload.product.thumbnail,
+      caption: fullCaption,
+      parse_mode: 'HTML',
+    });
+  }
+}

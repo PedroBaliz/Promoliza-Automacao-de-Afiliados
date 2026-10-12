@@ -71,7 +71,17 @@ export class ShopeeService {
 
       return products;
     } catch (error: any) {
-      console.error('❌ [Shopee] Erro ao buscar produtos:', error?.response?.data || error?.message || error);
+      if (error?.response) {
+        console.error('[Shopee] Falha na requisição', {
+          status: error.response.status,
+          url: error.config?.url,
+          method: error.config?.method,
+          data: error.response.data,
+        });
+      } else {
+        console.error('[Shopee] Erro de conexão:', error?.message || error);
+      }
+
       return [];
     }
   }

@@ -22,7 +22,7 @@ export const config = {
   gemini: {
     apiKey: process.env.GEMINI_API_KEY || '',
   },
-  tokensFilePath: path.resolve(process.cwd(), '.local', 'tokens.json'),
+  tokensFilePath: path.resolve(process.cwd(), 'src', 'config', 'tokens.json'),
   postedProductsFilePath: path.resolve(process.cwd(), '.local', 'posted-products.json'),
   minDiscountPercentage: Math.min(
     100,

@@ -1,68 +1,93 @@
 import dotenv from 'dotenv';
+dotenv.config();
+
 import cron from 'node-cron';
+import { AuthService } from './services/auth.service';
 import { MercadoLivreService } from './services/mercadolivre.service';
 import { AIService } from './services/ai.service';
 import { DatabaseService } from './services/database.service';
 import { TelegramProvider } from './providers/telegram.provider';
 import { buildAffiliateUrl } from './utils/affiliate';
 
-// Carrega as variáveis de ambiente do .env
-dotenv.config();
-
-const mlService = new MercadoLivreService();
+// Inicialização dos Serviços
+const authService = new AuthService();
+const mercadoLivreService = new MercadoLivreService(authService);
 const aiService = new AIService();
-const dbService = new DatabaseService();
+const databaseService = new DatabaseService();
 const telegramProvider = new TelegramProvider();
 
+/**
+ * Função principal de orquestração da busca e envio de ofertas
+ */
 async function runPromoliza() {
-  console.log('🔍 [Promoliza] Iniciando busca por ofertas imperdíveis...');
+  console.log('\n🔍 [Promoliza] Iniciando busca por ofertas imperdíveis...');
 
   try {
-    // Busca produtos em promoção
-    const products = await mlService.fetchDeals('gaming', 20);
+    // 1. Busca ofertas no Mercado Livre
+    const keywords = ['gaming', 'hardware', 'perifericos', 'smartphone'];
+    const selectedKeyword = keywords[Math.floor(Math.random() * keywords.length)];
 
-    if (products.length === 0) {
-      console.log('⚠️ [Promoliza] Nenhuma oferta encontrada neste ciclo.');
+    const deals = await mercadoLivreService.fetchDeals(selectedKeyword, 15);
+
+    if (!deals || deals.length === 0) {
+      console.log('⚠️ [Promoliza] Nenhuma oferta qualificada encontrada neste ciclo.');
       return;
     }
 
-    for (const product of products) {
-      // Verifica se o produto já foi postado
-      if (dbService.hasBeenSent(product.id)) {
-        continue;
+    // 2. Filtra produtos que ainda não foram postados
+    let targetProduct = null;
+    for (const deal of deals) {
+      const alreadyPosted = await databaseService.isProductPosted(deal.id);
+      if (!alreadyPosted) {
+        targetProduct = deal;
+        break;
       }
-
-      console.log(`✨ Oferta encontrada: ${product.title}`);
-
-      // Gera a legenda persuasiva com a Gemini API
-      const caption = await aiService.generateCaption(product);
-
-      // Converte a URL para link de afiliado
-      const affiliateUrl = buildAffiliateUrl(product.permalink);
-
-      // Dispara para o canal do Telegram
-      await telegramProvider.sendOffer({
-        product,
-        caption,
-        affiliateUrl,
-      });
-
-      // Marca o produto como enviado
-      dbService.markAsSent(product.id);
-      console.log(`🚀 Oferta disparada com sucesso no Telegram! ID: ${product.id}`);
-
-      // Processa uma oferta por ciclo para evitar spam
-      break;
     }
-  } catch (error) {
-    console.error('❌ [Promoliza] Erro durante a execução do robô:', error);
+
+    if (!targetProduct) {
+      console.log('ℹ️ [Promoliza] Todas as ofertas encontradas já foram publicadas recentemente.');
+      return;
+    }
+
+    console.log(`✨ Oferta selecionada: ${targetProduct.title}`);
+
+    // 3. Monta o link com a Tag de Afiliado
+    const affiliateUrl = buildAffiliateUrl(targetProduct.permalink);
+
+    // 4. Gera a legenda persuasiva via Gemini com os campos exatos do tipo Product
+    const caption = await aiService.generateCaption({
+      id: targetProduct.id,
+      title: targetProduct.title,
+      originalPrice: targetProduct.originalPrice,
+      promotionalPrice: targetProduct.promotionalPrice,
+      discountPercentage: targetProduct.discountPercentage,
+      permalink: affiliateUrl,
+      thumbnail: targetProduct.thumbnail,
+      freeShipping: targetProduct.freeShipping,
+    });
+
+    // 5. Envia para o Telegram com os parâmetros esperados pelo provider
+    await telegramProvider.sendDealMessage(
+      caption,
+      targetProduct.thumbnail,
+      affiliateUrl
+    );
+
+    // 6. Registra no banco/memória para evitar postagens duplicadas
+    await databaseService.savePostedProduct(targetProduct.id);
+
+    console.log('🚀 [Promoliza] Oferta publicada com sucesso no Telegram!\n');
+  } catch (error: any) {
+    console.error('❌ [Promoliza] Erro durante a execução do ciclo:', error?.message || error);
   }
 }
 
-// Executa o robô a cada 15 minutos via Cron Job
-cron.schedule('*/15 * * * *', () => {
+// Execução imediata na inicialização para teste
+runPromoliza();
+
+// Agendamento via CRON (a cada 30 minutos)
+cron.schedule('*/30 * * * *', () => {
   runPromoliza();
 });
 
-// Executa uma vez imediatamente ao iniciar a aplicação
-runPromoliza();
+console.log('🤖 [Promoliza] Bot iniciado e aguardando próximos ciclos de agendamento...');

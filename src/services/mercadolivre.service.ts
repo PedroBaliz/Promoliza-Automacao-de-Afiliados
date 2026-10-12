@@ -1,18 +1,27 @@
 import axios from 'axios';
 import { Product } from '../types';
+import { AuthService } from './auth.service';
 
 export class MercadoLivreService {
-  private readonly baseUrl = 'https://api.mercadolivre.com/sites/MLB/search';
+  private readonly baseUrl = 'https://api.mercadolibre.com/sites/MLB/search';
 
-  /**
-   * Busca ofertas por palavra-chave e aplica filtros de desconto e frete
-   */
-  async fetchDeals(keyword: string, minDiscountPercentage = 20): Promise<Product[]> {
+  constructor(private authService: AuthService) {}
+
+  async fetchDeals(keyword: string, minDiscountPercentage = 10): Promise<Product[]> {
     try {
+      const token = await this.authService.getValidToken();
+
+      // Mapeamento de categorias populares no Brasil (MLB)
+      // MLB1051 = Informática / PC Gamer | MLB1000 = Eletrônicos | MLB1055 = Celulares
       const response = await axios.get(this.baseUrl, {
         params: {
-          q: keyword,
-          limit: 20,
+          category: 'MLB1051', // Busca focada na categoria de Informática/Gaming
+          limit: 30,
+        },
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json',
+          'User-Agent': 'PromolizaBot/1.0',
         },
       });
 
@@ -23,7 +32,6 @@ export class MercadoLivreService {
         const originalPrice = item.original_price || item.price;
         const currentPrice = item.price;
 
-        // Calcula a percentagem real de desconto
         if (originalPrice > currentPrice) {
           const discount = Math.round(((originalPrice - currentPrice) / originalPrice) * 100);
 
@@ -43,8 +51,8 @@ export class MercadoLivreService {
       }
 
       return filteredProducts;
-    } catch (error) {
-      console.error('Erro ao buscar produtos na API do Mercado Livre:', error);
+    } catch (error: any) {
+      console.error('Erro ao buscar produtos na API do Mercado Livre:', error?.response?.data || error?.message || error);
       return [];
     }
   }

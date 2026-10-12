@@ -35,4 +35,4 @@ RUN npm ci --only=production
 COPY --from=builder /app/dist ./dist
 
 # Comando para iniciar o robô em produção
-CMD ["npm", "start"]
+CMD ["node", "-r", "dotenv/config", "dist/index.js"]

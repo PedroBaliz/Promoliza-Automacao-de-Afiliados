@@ -1,58 +1,55 @@
 import { GoogleGenAI } from '@google/genai';
 import { Product } from '../types';
 
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 export class AIService {
-  private ai: GoogleGenAI;
+  private ai: GoogleGenAI | null = null;
 
   constructor() {
-    // Inicializa a SDK da Gemini API usando a chave das variáveis de ambiente
-    this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const apiKey = process.env.GEMINI_API_KEY?.trim();
+    if (apiKey) this.ai = new GoogleGenAI({ apiKey });
   }
 
-  /**
-   * Gera uma legenda persuasiva e formatada em HTML para o Telegram
-   */
   async generateCaption(product: Product): Promise<string> {
+    if (!this.ai) return this.getFallbackCaption(product);
+
+    const prompt = `Crie uma legenda curta e verdadeira em português para uma oferta de e-commerce.
+Use apenas os dados fornecidos. Não invente frete, preço ou características. Use HTML simples para Telegram (<b>, <s>) e não inclua links.
+Produto: ${product.title}
+Preço anterior confirmado: R$ ${product.originalPrice.toFixed(2)}
+Preço atual: R$ ${product.promotionalPrice.toFixed(2)}
+Desconto calculado: ${product.discountPercentage}%
+Frete grátis confirmado: ${product.freeShipping ? 'sim' : 'não'}`;
+
     try {
-      const prompt = `
-Você é um especialista em copywriting para canais de ofertas no Telegram.
-Crie uma legenda altamente atrativa, curta e persuasiva para a seguinte promoção:
-
-- Produto: ${product.title}
-- Preço Original: R$ ${product.originalPrice.toFixed(2)}
-- Preço Promocional: R$ ${product.promotionalPrice.toFixed(2)} (${product.discountPercentage}% OFF)
-- Frete Grátis: ${product.freeShipping ? 'Sim' : 'Não'}
-
-Diretrizes da resposta:
-1. Use emojis adequados e chamativos.
-2. Destaque o desconto percentual e a economia em reais.
-3. Formate em HTML simples (use <b>texto</b> para negrito e <s>texto</s> para tachado).
-4. Mantenha o texto objetivo e com menos de 70 palavras.
-5. NÃO adicione links na resposta (o link de afiliado será anexado posteriormente).
-`;
-
       const response = await this.ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: prompt,
       });
-
-      return response.text || this.getFallbackCaption(product);
+      const text = response.text?.trim();
+      if (!text) return this.getFallbackCaption(product);
+      return text
+        .replace(/<(?!\/?(?:b|strong|i|em|s|strike|del)\b)[^>]*>/gi, '')
+        .slice(0, 850);
     } catch (error) {
-      console.error('Erro ao gerar legenda com Gemini API:', error);
+      console.error('[AI] Não foi possível gerar legenda com Gemini:', error);
       return this.getFallbackCaption(product);
     }
   }
 
-  /**
-   * Legenda padrão de segurança caso a API da IA falhe
-   */
   private getFallbackCaption(product: Product): string {
-    return (
-      `🔥 <b>OFERTA IMPERDÍVEL!</b>\n\n` +
-      `📦 <b>${product.title}</b>\n\n` +
-      `💥 De: <s>R$ ${product.originalPrice.toFixed(2)}</s>\n` +
-      `🏷️ Por apenas: <b>R$ ${product.promotionalPrice.toFixed(2)}</b> (${product.discountPercentage}% OFF)\n` +
-      `${product.freeShipping ? '🚚 <b>Frete Grátis Disponível!</b>\n' : ''}`
-    );
+    const title = escapeHtml(product.title);
+    const discountLine = product.discountPercentage > 0
+      ? `\n🏷️ <b>${product.discountPercentage}% OFF</b>`
+      : '';
+    const originalLine = product.originalPrice > product.promotionalPrice
+      ? `\nDe: <s>R$ ${product.originalPrice.toFixed(2)}</s>`
+      : '';
+    const shippingLine = product.freeShipping ? '\n🚚 <b>Frete grátis confirmado</b>' : '';
+
+    return `🔥 <b>Oferta encontrada</b>\n\n📦 ${title}${originalLine}\n💰 <b>Por R$ ${product.promotionalPrice.toFixed(2)}</b>${discountLine}${shippingLine}`;
   }
 }

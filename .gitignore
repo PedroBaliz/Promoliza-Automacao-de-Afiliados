@@ -1,3 +1,7 @@
 node_modules/
 dist/
 .env
+.local/
+logs/
+src/config/tokens.json
+src/config/posted-products.json

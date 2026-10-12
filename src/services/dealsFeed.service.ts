@@ -4,42 +4,42 @@ import { Product } from '../types';
 export class DealsFeedService {
   private readonly apiUrl = 'https://gatry.com/promocoes/json';
 
-  async fetchTopDeals(): Promise<Product[]> {
+  async fetchTopDeals(minDiscountPercentage = 10): Promise<Product[]> {
     try {
-      const response = await axios.get(this.apiUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          'Accept': 'application/json, text/plain, */*',
-          'Referer': 'https://gatry.com/',
-        },
-        timeout: 10000,
-      });
+      const response = await axios.get(this.apiUrl, { timeout: 10000 });
+      const items = Array.isArray(response.data) ? response.data : response.data?.promocoes;
+      if (!Array.isArray(items)) return [];
 
-      const items = Array.isArray(response.data) ? response.data : response.data?.promocoes || [];
       const products: Product[] = [];
-
       for (const item of items) {
-        if (!item.titulo) continue;
+        const title = typeof item?.titulo === 'string' ? item.titulo.trim() : '';
+        const link = typeof item?.link === 'string' ? item.link : item?.url;
+        const price = Number.parseFloat(String(item?.preco ?? '').replace(/[^\d,.]/g, '').replace(',', '.'));
+        const originalPrice = Number(item?.preco_original ?? item?.preco_de ?? item?.original_price);
+        if (!title || typeof link !== 'string' || !Number.isFinite(price) || price <= 0) continue;
+        if (!Number.isFinite(originalPrice) || originalPrice <= price) continue;
 
-        // Limpa e converte o valor da promoção
-        const rawPrice = item.preco ? String(item.preco).replace(/[^\d,.]/g, '').replace(',', '.') : '0';
-        const price = parseFloat(rawPrice) || 0;
+        const discountPercentage = Math.round(((originalPrice - price) / originalPrice) * 100);
+        if (discountPercentage < minDiscountPercentage) continue;
+
+        let permalink: URL;
+        try { permalink = new URL(link, this.apiUrl); } catch { continue; }
+        if (!['http:', 'https:'].includes(permalink.protocol)) continue;
 
         products.push({
-          id: `gatry_${item.id || item.link}`,
-          title: item.titulo,
-          originalPrice: price > 0 ? Number((price * 1.25).toFixed(2)) : 0,
+          id: `gatry_${String(item?.id || permalink.toString())}`,
+          title,
+          originalPrice,
           promotionalPrice: price,
-          discountPercentage: 20,
-          permalink: item.link || item.url || 'https://gatry.com',
-          thumbnail: item.imagem || item.foto || '',
-          freeShipping: true,
+          discountPercentage,
+          permalink: permalink.toString(),
+          thumbnail: typeof item?.imagem === 'string' ? item.imagem : typeof item?.foto === 'string' ? item.foto : '',
+          freeShipping: item?.frete_gratis === true || item?.free_shipping === true,
         });
       }
-
       return products;
-    } catch (error: any) {
-      console.error('❌ [DealsFeed] Erro ao buscar JSON de promoções:', error?.message || error);
+    } catch (error: unknown) {
+      console.error('[DealsFeed] Falha ao buscar promoções:', axios.isAxiosError(error) ? error.message : String(error));
       return [];
     }
   }

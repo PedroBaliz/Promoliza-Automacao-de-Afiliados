@@ -1,25 +1,75 @@
 import axios from 'axios';
+import fs from 'fs';
+import { config } from '../config/env.config';
+
+interface TokenData {
+  accessToken: string;
+  refreshToken: string;
+  updatedAt: string;
+}
 
 export class AuthService {
-  private accessToken: string | null = process.env.MLB_ACCESS_TOKEN || null;
-  private refreshToken: string | null = process.env.MLB_REFRESH_TOKEN || null;
-  private tokenExpiresAt: number = 0; // Timestamp em milissegundos
+  private accessToken: string | null = null;
+  private refreshToken: string | null = null;
+  private tokenExpiresAt: number = 0;
+
+  constructor() {
+    this.loadTokens();
+  }
 
   /**
-   * Retorna um Access Token válido. Se estiver expirado (ou próximo de expirar),
-   * realiza a renovação automática via Refresh Token.
+   * Carrega os tokens do ficheiro tokens.json ou toma como fallback as variáveis de ambiente
+   */
+  private loadTokens(): void {
+    try {
+      if (fs.existsSync(config.tokensFilePath)) {
+        const fileContent = fs.readFileSync(config.tokensFilePath, 'utf8');
+        const data: TokenData = JSON.parse(fileContent);
+        
+        if (data.accessToken && data.refreshToken) {
+          this.accessToken = data.accessToken;
+          this.refreshToken = data.refreshToken;
+          return;
+        }
+      }
+    } catch (error) {
+      console.warn('⚠️ [Auth] Não foi possível carregar tokens.json, a usar valores do .env');
+    }
+
+    this.accessToken = config.mercadolivre.initialAccessToken;
+    this.refreshToken = config.mercadolivre.initialRefreshToken;
+  }
+
+  /**
+   * Salva o novo par de tokens no ficheiro tokens.json
+   */
+  private saveTokens(accessToken: string, refreshToken: string): void {
+    const data: TokenData = {
+      accessToken,
+      refreshToken,
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      fs.writeFileSync(config.tokensFilePath, JSON.stringify(data, null, 2), 'utf8');
+      console.log('💾 [Auth] Novos tokens persistidos com sucesso em config/tokens.json');
+    } catch (error: any) {
+      console.error('❌ [Auth] Erro ao guardar ficheiro tokens.json:', error?.message);
+    }
+  }
+
+  /**
+   * Retorna um Access Token válido, renovando-o se necessário
    */
   async getValidToken(): Promise<string> {
     const now = Date.now();
 
-    // Se o token existe e ainda faltam mais de 5 minutos para expirar, reutiliza
     if (this.accessToken && this.tokenExpiresAt > now + 5 * 60 * 1000) {
       return this.accessToken;
     }
 
-    // Se não há refresh token disponível nas variáveis de ambiente
     if (!this.refreshToken) {
-      throw new Error('MLB_REFRESH_TOKEN não está definido no arquivo .env');
+      throw new Error('Nenhum Refresh Token encontrado no .env nem em config/tokens.json');
     }
 
     console.log('🔄 [Auth] Renovando Access Token do Mercado Livre...');
@@ -28,17 +78,14 @@ export class AuthService {
     return this.accessToken!;
   }
 
-  /**
-   * Realiza a chamada OAuth2 para o endpoint de token do Mercado Livre
-   */
   private async refreshAccessToken(): Promise<void> {
     try {
       const response = await axios.post(
-        'https://api.mercadolibre.com/oauth/token',
+        `${config.mercadolivre.baseUrl}/oauth/token`,
         new URLSearchParams({
           grant_type: 'refresh_token',
-          client_id: process.env.MLB_CLIENT_ID || '',
-          client_secret: process.env.MLB_CLIENT_SECRET || '',
+          client_id: config.mercadolivre.clientId,
+          client_secret: config.mercadolivre.clientSecret,
           refresh_token: this.refreshToken!,
         }),
         {
@@ -52,16 +99,14 @@ export class AuthService {
       const { access_token, refresh_token, expires_in } = response.data;
 
       this.accessToken = access_token;
-      // O Mercado Livre envia um novo refresh_token em cada rotação
-      this.refreshToken = refresh_token; 
-      // expires_in vem em segundos (geralmente 21600s = 6h)
+      this.refreshToken = refresh_token;
       this.tokenExpiresAt = Date.now() + expires_in * 1000;
 
+      // Salva automaticamente no ficheiro de configuração
+      this.saveTokens(access_token, refresh_token);
       console.log('✅ [Auth] Access Token renovado com sucesso!');
-      console.log(`🔑 Novo Refresh Token gerado: ${refresh_token}`);
-      console.log('⚠️ Atualize a variável MLB_REFRESH_TOKEN no seu .env se reiniciar o contêiner.');
     } catch (error: any) {
-      console.error('❌ [Auth] Erro ao renovar o token de acesso:', error?.response?.data || error?.message);
+      console.error('❌ [Auth] Erro ao renovar o token:', error?.response?.data || error?.message);
       throw error;
     }
   }

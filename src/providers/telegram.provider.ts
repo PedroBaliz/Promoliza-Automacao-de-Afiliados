@@ -15,8 +15,11 @@ export class TelegramProvider implements IMessengerProvider {
       throw new Error('Credenciais do Telegram não foram configuradas no .env');
     }
 
-    const url = `https://api.telegram.org/bot${this.botToken}/sendPhoto`;
+    if (!payload?.product?.thumbnail) {
+      throw new Error('Não foi possível enviar a oferta: thumbnail do produto ausente.');
+    }
 
+    const url = `https://api.telegram.org/bot${this.botToken}/sendPhoto`;
     const fullCaption = `${payload.caption}\n\n🛒 <b>Compre aqui:</b> <a href="${payload.affiliateUrl}">Acessar Oferta</a>`;
 
     await axios.post(url, {
@@ -24,6 +27,23 @@ export class TelegramProvider implements IMessengerProvider {
       photo: payload.product.thumbnail,
       caption: fullCaption,
       parse_mode: 'HTML',
+    });
+  }
+
+  async sendDealMessage(caption: string, thumbnail: string, affiliateUrl: string): Promise<void> {
+    await this.sendOffer({
+      product: {
+        id: 'telegram-fallback',
+        title: 'Oferta',
+        originalPrice: 0,
+        promotionalPrice: 0,
+        discountPercentage: 0,
+        permalink: affiliateUrl,
+        thumbnail,
+        freeShipping: false,
+      },
+      caption,
+      affiliateUrl,
     });
   }
 }

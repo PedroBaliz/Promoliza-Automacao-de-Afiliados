@@ -11,16 +11,15 @@ export class MercadoLivreService {
     try {
       const token = await this.authService.getValidToken();
 
-      // Mapeamento de categorias populares no Brasil (MLB)
-      // MLB1051 = Informática / PC Gamer | MLB1000 = Eletrônicos | MLB1055 = Celulares
       const response = await axios.get(this.baseUrl, {
         params: {
-          category: 'MLB1051', // Busca focada na categoria de Informática/Gaming
+          q: keyword || 'eletronicos',
+          category: 'MLB1051',
           limit: 30,
         },
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/json',
+          Authorization: 'Bearer ' + token,
+          Accept: 'application/json',
           'User-Agent': 'PromolizaBot/1.0',
         },
       });

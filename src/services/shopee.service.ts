@@ -2,7 +2,6 @@ import axios from 'axios';
 import { Product } from '../types';
 
 export class ShopeeService {
-  // Endpoint público de recomendações da Shopee (não dispara o anti-bot 90309999)
   private readonly baseUrl = 'https://shopee.com.br/api/v4/recommend/recommend';
 
   async fetchDeals(minDiscountPercentage = 10): Promise<Product[]> {
@@ -25,14 +24,43 @@ export class ShopeeService {
         timeout: 10000,
       });
 
-      const sections = response.data?.data?.sections || [];
+      // A Shopee pode devolver um objeto de erro mesmo com HTTP 200.
+      if (response.data?.error) {
+        console.error('[Shopee] A API retornou um erro no corpo da resposta:', {
+          status: response.status,
+          error: response.data.error,
+          is_login: response.data.is_login,
+          action_type: response.data.action_type,
+          redirect_to_error_page: response.data.redirect_to_error_page,
+          tracking_id: response.data.tracking_id,
+        });
+        return [];
+      }
+
+      const sections = response.data?.data?.sections;
+      if (!Array.isArray(sections) || sections.length === 0) {
+        console.warn('[Shopee] Resposta recebida, mas sem seções de produtos:', {
+          status: response.status,
+          topLevelKeys: response.data && typeof response.data === 'object'
+            ? Object.keys(response.data)
+            : [],
+          dataKeys: response.data?.data && typeof response.data.data === 'object'
+            ? Object.keys(response.data.data)
+            : [],
+        });
+        return [];
+      }
+
       let rawItems: any[] = [];
 
       for (const section of sections) {
-        if (section.data?.item) {
-          rawItems = rawItems.concat(section.data.item);
+        const items = section?.data?.item;
+        if (Array.isArray(items)) {
+          rawItems = rawItems.concat(items);
         }
       }
+
+      console.log(`[Shopee] Itens brutos recebidos: ${rawItems.length}`);
 
       const products: Product[] = [];
 
@@ -69,10 +97,11 @@ export class ShopeeService {
         }
       }
 
+      console.log(`[Shopee] Produtos após processamento: ${products.length}`);
       return products;
     } catch (error: any) {
       if (error?.response) {
-        console.error('[Shopee] Falha na requisição', {
+        console.error('[Shopee] Falha na requisição HTTP', {
           status: error.response.status,
           url: error.config?.url,
           method: error.config?.method,

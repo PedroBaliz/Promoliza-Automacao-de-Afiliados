@@ -1,28 +1,46 @@
 import fs from 'fs';
 import path from 'path';
+import { config } from '../config/env.config';
+
+type StoredProducts = {
+  products?: Record<string, number>;
+  productIds?: string[];
+};
+
+const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 export class DatabaseService {
-  private sentProductIds: Set<string> = new Set();
-  private readonly storageFilePath = path.resolve(process.cwd(), 'src', 'config', 'posted-products.json');
+  private sentProducts = new Map<string, number>();
+  private readonly storageFilePath = config.postedProductsFilePath;
 
   constructor() {
     this.loadPersistedProducts();
   }
 
   private loadPersistedProducts(): void {
+    const legacyPath = path.resolve(process.cwd(), 'src', 'config', 'posted-products.json');
+    const filePath = fs.existsSync(this.storageFilePath) ? this.storageFilePath : legacyPath;
+
     try {
-      if (!fs.existsSync(this.storageFilePath)) {
-        return;
-      }
+      if (!fs.existsSync(filePath)) return;
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as StoredProducts;
+      const now = Date.now();
 
-      const raw = fs.readFileSync(this.storageFilePath, 'utf8');
-      const parsed = JSON.parse(raw) as { productIds?: string[] };
-
-      if (Array.isArray(parsed.productIds)) {
-        parsed.productIds.forEach((productId) => this.sentProductIds.add(productId));
+      if (parsed.products && typeof parsed.products === 'object') {
+        for (const [id, timestamp] of Object.entries(parsed.products)) {
+          if (typeof timestamp === 'number' && now - timestamp < RETENTION_MS) {
+            this.sentProducts.set(id, timestamp);
+          }
+        }
+      } else if (Array.isArray(parsed.productIds)) {
+        // Legacy format had no timestamps; retain those entries for one migration window.
+        for (const id of parsed.productIds) {
+          if (typeof id === 'string' && id) this.sentProducts.set(id, now);
+        }
+        this.persistProducts();
       }
     } catch (error) {
-      console.warn('⚠️ [Database] Não foi possível carregar os produtos enviados persistidos:', error);
+      console.warn('[Database] Não foi possível carregar o histórico de produtos publicados:', error);
     }
   }
 
@@ -30,24 +48,28 @@ export class DatabaseService {
     try {
       const dir = path.dirname(this.storageFilePath);
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(this.storageFilePath, JSON.stringify({ productIds: [...this.sentProductIds] }, null, 2), 'utf8');
+      const temporaryPath = `${this.storageFilePath}.tmp`;
+      const products = Object.fromEntries(this.sentProducts);
+      fs.writeFileSync(temporaryPath, JSON.stringify({ products }, null, 2), 'utf8');
+      fs.renameSync(temporaryPath, this.storageFilePath);
     } catch (error) {
-      console.error('❌ [Database] Erro ao persistir produtos enviados:', error);
+      console.error('[Database] Erro ao persistir histórico de produtos:', error);
     }
   }
 
-  /**
-   * Verifica se o produto já foi enviado recentemente
-   */
   isProductPosted(productId: string): boolean {
-    return this.sentProductIds.has(productId);
+    const timestamp = this.sentProducts.get(productId);
+    if (timestamp === undefined) return false;
+    if (Date.now() - timestamp >= RETENTION_MS) {
+      this.sentProducts.delete(productId);
+      this.persistProducts();
+      return false;
+    }
+    return true;
   }
 
-  /**
-   * Registra o ID do produto enviado
-   */
   savePostedProduct(productId: string): void {
-    this.sentProductIds.add(productId);
+    this.sentProducts.set(productId, Date.now());
     this.persistProducts();
   }
 

@@ -2,10 +2,9 @@ import axios from 'axios';
 import { Product } from '../types';
 
 export class MercadoLivreService {
-  // Endpoint público oficial de busca por palavra-chave do Mercado Livre Brasil
   private readonly baseUrl = 'https://api.mercadolibre.com/sites/MLB/search';
 
-  async fetchDeals(keyword: string = 'mouse gamer', minDiscountPercentage = 5): Promise<Product[]> {
+  async fetchDeals(keyword: string = 'promocao', minDiscountPercentage = 5): Promise<Product[]> {
     try {
       const response = await axios.get(this.baseUrl, {
         params: {
@@ -13,8 +12,9 @@ export class MercadoLivreService {
           limit: 30,
         },
         headers: {
+          // Remover User-Agent de navegador previne o bloqueio 403 da API pública
           'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept-Encoding': 'gzip,deflate,compress',
         },
         timeout: 10000,
       });
@@ -34,7 +34,7 @@ export class MercadoLivreService {
         }
 
         if (discount >= minDiscountPercentage || item.original_price) {
-          // Melhora a resolução da imagem enviada pelo ML de -I.jpg para -O.jpg
+          // Melhora a resolução da imagem enviada pelo ML
           const highResThumbnail = item.thumbnail
             ? item.thumbnail.replace('http://', 'https://').replace('-I.jpg', '-O.jpg')
             : '';
@@ -54,7 +54,7 @@ export class MercadoLivreService {
 
       return products;
     } catch (error: any) {
-      console.error('❌ [MercadoLivre] Erro ao buscar produtos:', error?.message || error);
+      console.error('❌ [MercadoLivre] Erro ao buscar produtos:', error?.response?.status || error?.message || error);
       return [];
     }
   }

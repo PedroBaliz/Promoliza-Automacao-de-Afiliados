@@ -1,31 +1,30 @@
-/**
- * Applies Mercado Livre affiliate tracking only to valid Mercado Livre links.
- * URLs from other marketplaces are returned unchanged.
- */
 export function buildAffiliateUrl(originalUrl: string): string {
-  let url: URL;
+  if (!originalUrl) return '';
+
+  const affiliateTag = process.env.ML_AFFILIATE_TAG || '';
+
+  if (!affiliateTag) {
+    return originalUrl;
+  }
+
   try {
-    url = new URL(originalUrl);
-  } catch {
-    throw new Error('O link do produto não é uma URL válida.');
+    const url = new URL(originalUrl);
+
+    // Formato Matt Tool (ex: matt:username:toolid)
+    if (affiliateTag.startsWith('matt:')) {
+      const [, mattWord, mattTool] = affiliateTag.split(':');
+      if (mattWord && mattTool) {
+        url.searchParams.set('matt_word', mattWord);
+        url.searchParams.set('matt_tool', mattTool);
+      }
+    } else {
+      // Formato de Tag Simples
+      url.searchParams.set('tag', affiliateTag);
+    }
+
+    return url.toString();
+  } catch (error) {
+    console.error('❌ Erro ao formatar URL de afiliado:', error);
+    return originalUrl;
   }
-
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new Error('O link do produto precisa usar HTTP ou HTTPS.');
-  }
-
-  const host = url.hostname.toLowerCase();
-  const isMercadoLivre = host === 'mercadolivre.com.br'
-    || host.endsWith('.mercadolivre.com.br')
-    || host === 'mercadolibre.com'
-    || host.endsWith('.mercadolibre.com')
-    || host === 'meli.la';
-
-  if (!isMercadoLivre) return url.toString();
-
-  const affiliateTag = (process.env.MLB_AFFILIATE_TAG || '').trim();
-  if (!affiliateTag) return url.toString();
-
-  url.searchParams.set('matt', affiliateTag);
-  return url.toString();
 }

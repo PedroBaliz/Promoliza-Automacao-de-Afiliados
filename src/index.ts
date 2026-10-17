@@ -1,65 +1,92 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import express from 'express';
 import cron from 'node-cron';
 import { ShopeeService } from './services/shopee.service';
 import { AIService } from './services/ai.service';
 import { DatabaseService } from './services/database.service';
 import { TelegramProvider } from './providers/telegram.provider';
 import { buildAffiliateUrl } from './utils/affiliate';
-import { config } from './config/env.config';
-import { Product } from './types';
 
+// Inicializa o servidor web para satisfazer o Health Check da Vercel
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.send('🤖 Promoliza Bot está rodando com sucesso!');
+});
+
+app.listen(PORT, () => {
+  console.log(`🌐 [HTTP] Servidor Web ativo escutando na porta ${PORT}`);
+});
+
+// Instâncias dos Serviços
 const shopeeService = new ShopeeService();
 const aiService = new AIService();
 const databaseService = new DatabaseService();
 const telegramProvider = new TelegramProvider();
 
-let cycleRunning = false;
+async function runPromoliza() {
+  console.log('\n🔍 [Promoliza] Buscando ofertas...');
 
-async function runPromoliza(): Promise<void> {
-  if (cycleRunning) {
-    console.warn('[Promoliza] Ciclo anterior ainda em execução; ignorando este disparo.');
-    return;
-  }
-
-  cycleRunning = true;
   try {
-    console.log('\n[Promoliza] Buscando ofertas na Shopee...');
-    const deals = await shopeeService.fetchDeals(config.minDiscountPercentage);
-    const candidates: Product[] = deals
-      .filter((deal) =>
-        Boolean(deal.id && deal.title && deal.permalink)
-        && Number.isFinite(deal.promotionalPrice)
-        && deal.promotionalPrice > 0
-        && Number.isFinite(deal.discountPercentage)
-        && deal.discountPercentage >= config.minDiscountPercentage
-        && deal.originalPrice >= deal.promotionalPrice,
-      )
-      .sort((a, b) => b.discountPercentage - a.discountPercentage);
+    const deals = await shopeeService.fetchDeals(10);
+    console.log(`📊 Ofertas encontradas: ${deals.length}`);
 
-    console.log(`[Promoliza] Ofertas qualificadas: ${candidates.length}`);
-    const targetProduct = candidates.find((deal) => !databaseService.isProductPosted(deal.id));
-
-    if (!targetProduct) {
-      console.log('[Promoliza] Nenhuma oferta nova e válida neste ciclo.');
+    if (!deals || deals.length === 0) {
+      console.log('⚠️ [Promoliza] Nenhuma oferta encontrada neste ciclo.');
       return;
     }
 
+    let targetProduct = null;
+    for (const deal of deals) {
+      const alreadyPosted = await databaseService.isProductPosted(deal.id);
+      if (!alreadyPosted) {
+        targetProduct = deal;
+        break;
+      }
+    }
+
+    if (!targetProduct) {
+      console.log('ℹ️ [Promoliza] Todas as ofertas já foram publicadas recentemente.');
+      return;
+    }
+
+    console.log(`✨ Oferta selecionada: ${targetProduct.title}`);
+
     const affiliateUrl = buildAffiliateUrl(targetProduct.permalink);
-    const caption = await aiService.generateCaption({ ...targetProduct, permalink: affiliateUrl });
-    await telegramProvider.sendOffer({ product: targetProduct, caption, affiliateUrl });
-    databaseService.savePostedProduct(targetProduct.id);
-    console.log(`[Promoliza] Oferta publicada: ${targetProduct.title}`);
-  } catch (error: unknown) {
-    console.error('[Promoliza] Falha no ciclo:', error instanceof Error ? error.message : error);
-  } finally {
-    cycleRunning = false;
+
+    console.log('🤖 Gerando legenda persuasiva via Gemini...');
+    const caption = await aiService.generateCaption({
+      id: targetProduct.id,
+      title: targetProduct.title,
+      originalPrice: targetProduct.originalPrice,
+      promotionalPrice: targetProduct.promotionalPrice,
+      discountPercentage: targetProduct.discountPercentage,
+      permalink: affiliateUrl,
+      thumbnail: targetProduct.thumbnail,
+      freeShipping: targetProduct.freeShipping,
+    });
+
+    console.log('🚀 Disparando para o Telegram...');
+    await telegramProvider.sendDealMessage(
+      caption,
+      targetProduct.thumbnail,
+      affiliateUrl
+    );
+
+    await databaseService.savePostedProduct(targetProduct.id);
+    console.log('✅ [Promoliza] Oferta enviada com sucesso!\n');
+  } catch (error: any) {
+    console.error('❌ [Promoliza] Erro durante o ciclo:', error?.message || error);
   }
 }
 
-void runPromoliza();
+// Execução inicial ao subir
+runPromoliza();
+
+// Agendamento no CRON (a cada 30 minutos)
 cron.schedule('*/30 * * * *', () => {
-  void runPromoliza();
+  runPromoliza();
 });
-console.log('[Promoliza] Bot iniciado; agendamento a cada 30 minutos.');

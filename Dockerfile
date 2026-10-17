@@ -1,38 +1,31 @@
-# Usa uma imagem oficial e leve do Node.js
-FROM node:20-alpine AS builder
+FROM node:20-slim
 
-# Define o diretório de trabalho no contêiner
+# Instala bibliotecas necessárias para o Chromium do Puppeteer rodar em ambiente Linux
+RUN apt-get update && apt-get install -y \
+    chromium \
+    fonts-ipafont-gothic \
+    fonts-wqy-zenhei \
+    fonts-thai-tlwg \
+    fonts-kacst \
+    fonts-freefont-ttf \
+    libxss1 \
+    --no-install-recommends \
+    && rm -rf /var/lib/apt-get/lists/*
+
+# Configura o Puppeteer para usar o Chromium instalado no sistema
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
 WORKDIR /app
 
-# Copia os ficheiros de dependências
 COPY package*.json ./
+RUN npm ci
 
-# Instala todas as dependências (incluindo devDependencies para build do TS)
-RUN npm install
+COPY . .
 
-# Copia o código-fonte e o tsconfig
-COPY tsconfig.json ./
-COPY src ./src
-
-# Compila o TypeScript para JavaScript (pasta dist)
+# Executa a compilação do TypeScript para a pasta ./dist
 RUN npm run build
 
-# Stage de Produção
-FROM node:20-alpine AS runner
+EXPOSE 3000
 
-WORKDIR /app
-
-# Define ambiente de produção
-ENV NODE_ENV=production
-
-# Copia os ficheiros de dependências
-COPY package*.json ./
-
-# Instala apenas as dependências de produção
-RUN npm ci --only=production
-
-# Copia o código compilado da etapa anterior
-COPY --from=builder /app/dist ./dist
-
-# Comando para iniciar o robô em produção
-CMD ["node", "-r", "dotenv/config", "dist/index.js"]
+CMD ["node", "dist/index.js"]

@@ -46,4 +46,16 @@ export class TelegramProvider implements IMessengerProvider {
       affiliateUrl,
     });
   }
+
+  async sendConvertedMessage(sourceText: string, affiliateUrl: string): Promise<void> {
+    if (!this.botToken || !this.chatId) {
+      throw new Error('Credenciais do Telegram não foram configuradas no .env');
+    }
+
+    await axios.post(`https://api.telegram.org/bot${this.botToken}/sendMessage`, {
+      chat_id: this.chatId,
+      text: `${sourceText}\n\n🛒 Acessar oferta: ${affiliateUrl}`,
+      disable_web_page_preview: false,
+    });
+  }
 }

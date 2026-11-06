@@ -18,12 +18,9 @@ export class DatabaseService {
   }
 
   private loadPersistedProducts(): void {
-    const legacyPath = path.resolve(process.cwd(), 'src', 'config', 'posted-products.json');
-    const filePath = fs.existsSync(this.storageFilePath) ? this.storageFilePath : legacyPath;
-
     try {
-      if (!fs.existsSync(filePath)) return;
-      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as StoredProducts;
+      if (!fs.existsSync(this.storageFilePath)) return;
+      const parsed = JSON.parse(fs.readFileSync(this.storageFilePath, 'utf8')) as StoredProducts;
       const now = Date.now();
 
       if (parsed.products && typeof parsed.products === 'object') {

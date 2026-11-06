@@ -1,0 +1,57 @@
+import { TelegramClient } from 'telegram';
+import { StringSession } from 'telegram/sessions';
+import { NewMessage, NewMessageEvent } from 'telegram/events';
+import input from 'input';
+import { config } from '../config/env.config';
+import { extractUrls, resolveMercadoLivreLink } from './link.service';
+
+export type DealLinkHandler = (url: string, sourceText: string) => Promise<void>;
+
+export class TelegramSourceService {
+  private readonly client: TelegramClient;
+
+  constructor(private readonly onDealLink: DealLinkHandler) {
+    this.client = new TelegramClient(
+      new StringSession(config.telegram.sourceSession),
+      config.telegram.apiId,
+      config.telegram.apiHash,
+      { connectionRetries: 5 },
+    );
+  }
+
+  async start(): Promise<void> {
+    if (
+      !config.telegram.apiId ||
+      !config.telegram.apiHash ||
+      !config.telegram.sourcePhone ||
+      config.telegram.sourceChats.length === 0
+    ) {
+      throw new Error(
+        'Configure TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SOURCE_PHONE e TELEGRAM_SOURCE_CHATS para ler grupos.',
+      );
+    }
+
+    await this.client.start({
+      phoneNumber: async () => config.telegram.sourcePhone,
+      phoneCode: async () => input.text('Código recebido no Telegram: '),
+      password: async () => input.text('Senha 2FA do Telegram: '),
+      onError: (error) => console.error('[TelegramSource] Erro de autenticação:', error),
+    });
+
+    console.log('[TelegramSource] Conectado. Sessão atualizada; salve TELEGRAM_SOURCE_SESSION se necessário.');
+    console.log(this.client.session.save());
+
+    this.client.addEventHandler(
+      async (event: NewMessageEvent) => this.handleMessage(event),
+      new NewMessage({ chats: config.telegram.sourceChats }),
+    );
+  }
+
+  private async handleMessage(event: NewMessageEvent): Promise<void> {
+    const text = event.message.message || '';
+    for (const rawUrl of extractUrls(text)) {
+      const affiliateUrl = await resolveMercadoLivreLink(rawUrl);
+      if (affiliateUrl) await this.onDealLink(affiliateUrl, text);
+    }
+  }
+}

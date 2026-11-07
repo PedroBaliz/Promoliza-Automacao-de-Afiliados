@@ -1,11 +1,31 @@
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions';
 import { NewMessage, NewMessageEvent } from 'telegram/events';
-import input from 'input';
+import readline from 'readline';
 import { config } from '../config/env.config';
 import { extractUrls, resolveMercadoLivreLink } from './link.service';
 
 export type DealLinkHandler = (url: string, sourceText: string) => Promise<void>;
+
+const terminal = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  terminal: Boolean(process.stdin.isTTY),
+});
+
+function prompt(label: string): Promise<string> {
+  return new Promise((resolve) => {
+    terminal.question(label, (answer) => resolve(answer.trim()));
+  });
+}
+
+function normalizeCode(value: string): string {
+  return value.replace(/\D/g, '');
+}
+
+function closePrompt(): void {
+  terminal.close();
+}
 
 export class TelegramSourceService {
   private readonly client: TelegramClient;
@@ -31,12 +51,16 @@ export class TelegramSourceService {
       );
     }
 
-    await this.client.start({
-      phoneNumber: async () => config.telegram.sourcePhone,
-      phoneCode: async () => input.text('Código recebido no Telegram: '),
-      password: async () => input.text('Senha 2FA do Telegram: '),
-      onError: (error) => console.error('[TelegramSource] Erro de autenticação:', error),
-    });
+    try {
+      await this.client.start({
+        phoneNumber: async () => config.telegram.sourcePhone,
+        phoneCode: async () => normalizeCode(await prompt('Código recebido no Telegram: ')),
+        password: async () => prompt('Senha 2FA do Telegram: '),
+        onError: (error) => console.error('[TelegramSource] Erro de autenticação:', error),
+      });
+    } finally {
+      closePrompt();
+    }
 
     console.log('[TelegramSource] Conectado. Sessão atualizada; salve TELEGRAM_SOURCE_SESSION se necessário.');
     console.log(this.client.session.save());

@@ -5,11 +5,18 @@ const MERCADO_LIVRE_HOSTS = new Set([
   'mercadolivre.com.br',
   'mercadolivre.com',
   'produto.mercadolivre.com.br',
+  'mercadolibre.com',
+  'meli.la',
 ]);
 
 function isMercadoLivreHost(hostname: string): boolean {
   const normalizedHostname = hostname.toLowerCase().replace(/^www\./, '');
-  return MERCADO_LIVRE_HOSTS.has(normalizedHostname);
+  return (
+    MERCADO_LIVRE_HOSTS.has(normalizedHostname) ||
+    normalizedHostname.endsWith('.mercadolivre.com.br') ||
+    normalizedHostname.endsWith('.mercadolivre.com') ||
+    normalizedHostname.endsWith('.mercadolibre.com')
+  );
 }
 
 export async function resolveMercadoLivreLink(rawUrl: string): Promise<string | null> {
@@ -33,7 +40,10 @@ export async function resolveMercadoLivreLink(rawUrl: string): Promise<string | 
       response.request?.res?.responseUrl || response.request?.responseURL || url.toString(),
     );
     response.data.destroy();
-    if (!isMercadoLivreHost(finalUrl.hostname)) return null;
+    if (!isMercadoLivreHost(finalUrl.hostname)) {
+      console.log(`[Link] URL ignorada: destino fora do Mercado Livre: ${finalUrl.toString()}`);
+      return null;
+    }
     return buildAffiliateUrl(finalUrl.toString());
   } catch {
     return null;

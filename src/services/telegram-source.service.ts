@@ -1,9 +1,8 @@
 import { TelegramClient, utils } from 'telegram';
 import { StringSession } from 'telegram/sessions';
-import { NewMessage, NewMessageEvent } from 'telegram/events';
 import readline from 'readline';
 import { config } from '../config/env.config';
-import { extractUrls, resolveMercadoLivreLink } from './link.service';
+import { extractUrls, resolveMercadoLivreLink, shortenUrl } from './link.service';
 
 export type DealLinkHandler = (url: string, sourceText: string) => Promise<void>;
 
@@ -37,17 +36,17 @@ function validateSourceChats(chats: string[]): void {
   }
 }
 
-function collectMessageUrls(event: NewMessageEvent): string[] {
-  const text = event.message.message || '';
+function collectMessageUrls(message: any): string[] {
+  const text = message.message || '';
   const urls = extractUrls(text);
 
-  for (const entity of event.message.entities || []) {
+  for (const entity of message.entities || []) {
     if (entity.className === 'MessageEntityTextUrl' && typeof entity.url === 'string') {
       urls.push(entity.url);
     }
   }
 
-  for (const row of event.message.buttons || []) {
+  for (const row of message.buttons || []) {
     for (const button of row) {
       if (button.url) urls.push(button.url);
     }
@@ -56,9 +55,20 @@ function collectMessageUrls(event: NewMessageEvent): string[] {
   return [...new Set(urls)];
 }
 
+function removeLinksFromSourceText(text: string): string {
+  return text
+    .replace(/\[([^\]]*)\]\((?:https?:\/\/)[^\s)]+\)/gi, '$1')
+    .replace(/https?:\/\/[^\s<>()]+/gi, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n[ \t]+\n/g, '\n\n')
+    .trim();
+}
+
 export class TelegramSourceService {
   private readonly client: TelegramClient;
-  private sourceChatIds = new Set<string>();
+  private sourceChats: Array<{ id: string; entity: any }> = [];
+  private readonly lastMessageIds = new Map<string, number>();
+  private polling = false;
 
   constructor(private readonly onDealLink: DealLinkHandler) {
     this.client = new TelegramClient(
@@ -100,38 +110,64 @@ export class TelegramSourceService {
       console.log(this.client.session.save());
     }
 
-    const sourceChatIds = await Promise.all(
+    const sourceChats = await Promise.all(
       config.telegram.sourceChats.map(async (chat) => {
         const entity = await this.client.getEntity(chat);
         const chatId = utils.getPeerId(entity);
         console.log(`[TelegramSource] Chat de origem resolvido: ${chat} (${chatId})`);
-        return chatId;
+        return { id: chatId, entity };
       }),
     );
-    this.sourceChatIds = new Set(sourceChatIds);
-
-    this.client.addEventHandler(
-      async (event: NewMessageEvent) => {
-        const chatId = event.chatId?.toString();
-        if (!chatId || !this.sourceChatIds.has(chatId)) return;
-
-        try {
-          await this.handleMessage(event);
-        } catch (error: unknown) {
-          console.error('[TelegramSource] Erro ao processar mensagem:', error);
-        }
-      },
-      new NewMessage(),
-    );
-    console.log(`[TelegramSource] Monitorando ${sourceChatIds.length} chat(s) de origem.`);
+    this.sourceChats = sourceChats;
+    await this.initializePolling();
+    setInterval(() => {
+      void this.pollSourceChats();
+    }, 10_000);
+    console.log(`[TelegramSource] Monitorando ${sourceChats.length} chat(s) de origem.`);
   }
 
-  private async handleMessage(event: NewMessageEvent): Promise<void> {
-    const text = event.message.message || '';
-    const rawUrls = collectMessageUrls(event);
+  private async initializePolling(): Promise<void> {
+    for (const chat of this.sourceChats) {
+      const messages = await this.client.getMessages(chat.entity, { limit: 1 });
+      const latestMessage = messages[0];
+      this.lastMessageIds.set(chat.id, latestMessage?.id || 0);
+      console.log(
+        `[TelegramSource] Ponto inicial: chat=${chat.id} mensagem=${latestMessage?.id || 'nenhuma'}.`,
+      );
+    }
+  }
+
+  private async pollSourceChats(): Promise<void> {
+    if (this.polling) return;
+    this.polling = true;
+
+    try {
+      for (const chat of this.sourceChats) {
+        const messages = await this.client.getMessages(chat.entity, { limit: 20 });
+        const lastMessageId = this.lastMessageIds.get(chat.id) || 0;
+        const newMessages = messages
+          .filter((message) => message.id > lastMessageId)
+          .sort((left, right) => left.id - right.id);
+
+        for (const message of newMessages) {
+          this.lastMessageIds.set(chat.id, message.id);
+          await this.handleMessage(message, chat.id);
+        }
+      }
+    } catch (error: unknown) {
+      console.error('[TelegramSource] Erro ao consultar novas mensagens:', error);
+    } finally {
+      this.polling = false;
+    }
+  }
+
+  private async handleMessage(message: any, chatId: string): Promise<void> {
+    const text = message.message || '';
+    const preview = text.replace(/\s+/g, ' ').trim().slice(0, 100) || '[sem texto]';
+    const rawUrls = collectMessageUrls(message);
     console.log(
-      `[TelegramSource] Nova mensagem recebida no chat ${event.message.chatId?.toString() || 'desconhecido'} ` +
-        `(${rawUrls.length} URL(s) encontrada(s)).`,
+      `[TelegramSource] Mensagem recebida: chat=${chatId} mensagem=${message.id} ` +
+        `"${preview}" (${rawUrls.length} URL(s) encontrada(s)).`,
     );
 
     if (rawUrls.length === 0) {
@@ -146,8 +182,10 @@ export class TelegramSourceService {
         continue;
       }
 
-      console.log('[TelegramSource] Link do Mercado Livre encontrado; enviando para o grupo de destino.');
-      await this.onDealLink(affiliateUrl, text);
+      const shortenedUrl = await shortenUrl(affiliateUrl);
+      const cleanSourceText = removeLinksFromSourceText(text);
+      console.log('[TelegramSource] Link do Mercado Livre encontrado; enviando somente o link afiliado.');
+      await this.onDealLink(shortenedUrl, cleanSourceText);
     }
   }
 }

@@ -40,6 +40,27 @@ export async function resolveMercadoLivreLink(rawUrl: string): Promise<string | 
   }
 }
 
+export async function shortenUrl(url: string): Promise<string> {
+  try {
+    const response = await axios.get('https://is.gd/create.php', {
+      params: { format: 'simple', url },
+      timeout: 10000,
+      responseType: 'text',
+      validateStatus: (status) => status >= 200 && status < 300,
+    });
+    const shortenedUrl = response.data.trim();
+
+    if (!/^https?:\/\/is\.gd\/[A-Za-z0-9]+$/.test(shortenedUrl)) {
+      throw new Error('O encurtador retornou uma resposta inválida.');
+    }
+
+    return shortenedUrl;
+  } catch (error) {
+    console.error('[Link] Não foi possível encurtar o link afiliado; usando o link completo:', error);
+    return url;
+  }
+}
+
 export function extractUrls(text: string): string[] {
   return [...new Set(text.match(/https?:\/\/[^\s<>()]+/gi) || [])]
     .map((url) => url.replace(/[.,!?;:]+$/, ''));

@@ -74,8 +74,11 @@ export class TelegramSourceService {
       closePrompt();
     }
 
-    console.log('[TelegramSource] Conectado. Sessão atualizada; salve TELEGRAM_SOURCE_SESSION se necessário.');
-    console.log(this.client.session.save());
+    console.log('[TelegramSource] Conectado.');
+    if (!config.telegram.sourceSession) {
+      console.log('[TelegramSource] Sessão gerada; salve o valor exibido em TELEGRAM_SOURCE_SESSION.');
+      console.log(this.client.session.save());
+    }
 
     this.client.addEventHandler(
       async (event: NewMessageEvent) => {
@@ -91,9 +94,26 @@ export class TelegramSourceService {
 
   private async handleMessage(event: NewMessageEvent): Promise<void> {
     const text = event.message.message || '';
-    for (const rawUrl of extractUrls(text)) {
+    const rawUrls = extractUrls(text);
+    console.log(
+      `[TelegramSource] Nova mensagem recebida no chat ${event.message.chatId?.toString() || 'desconhecido'} ` +
+        `(${rawUrls.length} URL(s) encontrada(s)).`,
+    );
+
+    if (rawUrls.length === 0) {
+      console.log('[TelegramSource] Mensagem ignorada: nenhum URL HTTP/HTTPS no texto.');
+      return;
+    }
+
+    for (const rawUrl of rawUrls) {
       const affiliateUrl = await resolveMercadoLivreLink(rawUrl);
-      if (affiliateUrl) await this.onDealLink(affiliateUrl, text);
+      if (!affiliateUrl) {
+        console.log(`[TelegramSource] URL ignorada: não é um link válido do Mercado Livre: ${rawUrl}`);
+        continue;
+      }
+
+      console.log('[TelegramSource] Link do Mercado Livre encontrado; enviando para o grupo de destino.');
+      await this.onDealLink(affiliateUrl, text);
     }
   }
 }

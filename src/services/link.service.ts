@@ -7,6 +7,11 @@ const MERCADO_LIVRE_HOSTS = new Set([
   'produto.mercadolivre.com.br',
 ]);
 
+function isMercadoLivreHost(hostname: string): boolean {
+  const normalizedHostname = hostname.toLowerCase().replace(/^www\./, '');
+  return MERCADO_LIVRE_HOSTS.has(normalizedHostname);
+}
+
 export async function resolveMercadoLivreLink(rawUrl: string): Promise<string | null> {
   let url: URL;
   try {
@@ -24,9 +29,11 @@ export async function resolveMercadoLivreLink(rawUrl: string): Promise<string | 
       responseType: 'stream',
       validateStatus: (status) => status >= 200 && status < 400,
     });
-    const finalUrl = new URL(response.request?.res?.responseUrl || url.toString());
+    const finalUrl = new URL(
+      response.request?.res?.responseUrl || response.request?.responseURL || url.toString(),
+    );
     response.data.destroy();
-    if (!MERCADO_LIVRE_HOSTS.has(finalUrl.hostname.toLowerCase())) return null;
+    if (!isMercadoLivreHost(finalUrl.hostname)) return null;
     return buildAffiliateUrl(finalUrl.toString());
   } catch {
     return null;

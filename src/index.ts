@@ -22,7 +22,10 @@ app.listen(PORT, () => {
 
 async function handleDealLink(affiliateUrl: string, sourceText: string): Promise<void> {
   const productId = `ml_link_${crypto.createHash('sha256').update(affiliateUrl).digest('hex').slice(0, 32)}`;
-  if (databaseService.isProductPosted(productId)) return;
+  if (databaseService.isProductPosted(productId)) {
+    console.log(`[Promoliza] Oferta ignorada: link já enviado nos últimos 30 dias.`);
+    return;
+  }
 
   await telegramProvider.sendConvertedMessage(sourceText, affiliateUrl);
   databaseService.savePostedProduct(productId);

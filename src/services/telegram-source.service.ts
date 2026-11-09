@@ -1,4 +1,4 @@
-import { TelegramClient } from 'telegram';
+import { TelegramClient, utils } from 'telegram';
 import { StringSession } from 'telegram/sessions';
 import { NewMessage, NewMessageEvent } from 'telegram/events';
 import readline from 'readline';
@@ -35,6 +35,25 @@ function validateSourceChats(chats: string[]): void {
         'Use @username ou o ID numérico do grupo, não o nome exibido.',
     );
   }
+}
+
+function collectMessageUrls(event: NewMessageEvent): string[] {
+  const text = event.message.message || '';
+  const urls = extractUrls(text);
+
+  for (const entity of event.message.entities || []) {
+    if (entity.className === 'MessageEntityTextUrl' && typeof entity.url === 'string') {
+      urls.push(entity.url);
+    }
+  }
+
+  for (const row of event.message.buttons || []) {
+    for (const button of row) {
+      if (button.url) urls.push(button.url);
+    }
+  }
+
+  return [...new Set(urls)];
 }
 
 export class TelegramSourceService {
@@ -80,6 +99,15 @@ export class TelegramSourceService {
       console.log(this.client.session.save());
     }
 
+    const sourceChatIds = await Promise.all(
+      config.telegram.sourceChats.map(async (chat) => {
+        const entity = await this.client.getEntity(chat);
+        const chatId = utils.getPeerId(entity);
+        console.log(`[TelegramSource] Chat de origem resolvido: ${chat} (${chatId})`);
+        return chatId;
+      }),
+    );
+
     this.client.addEventHandler(
       async (event: NewMessageEvent) => {
         try {
@@ -88,13 +116,14 @@ export class TelegramSourceService {
           console.error('[TelegramSource] Erro ao processar mensagem:', error);
         }
       },
-      new NewMessage({ chats: config.telegram.sourceChats }),
+      new NewMessage({ chats: sourceChatIds }),
     );
+    console.log(`[TelegramSource] Monitorando ${sourceChatIds.length} chat(s) de origem.`);
   }
 
   private async handleMessage(event: NewMessageEvent): Promise<void> {
     const text = event.message.message || '';
-    const rawUrls = extractUrls(text);
+    const rawUrls = collectMessageUrls(event);
     console.log(
       `[TelegramSource] Nova mensagem recebida no chat ${event.message.chatId?.toString() || 'desconhecido'} ` +
         `(${rawUrls.length} URL(s) encontrada(s)).`,

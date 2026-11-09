@@ -20,5 +20,14 @@ export const config = {
       .map((chat) => chat.trim())
       .filter(Boolean),
   },
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY || '',
+    model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+    prompt:
+      process.env.GEMINI_PROMPT ||
+      'Escreva uma legenda curta, persuasiva e natural em português do Brasil para uma promoção. ' +
+        'Mantenha nome do produto, preço e cupom quando existirem. Não invente informações. ' +
+        'Não inclua links, hashtags ou explicações; retorne somente a legenda.',
+  },
   postedProductsFilePath: path.resolve(process.cwd(), '.local', 'posted-products.json'),
 };

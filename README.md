@@ -97,6 +97,10 @@ PORT=3000
 NODE_ENV=production
 
 ML_AFFILIATE_TAG=seu_tag_de_afiliado
+GEMINI_API_KEY=sua_chave_da_api_do_gemini
+GEMINI_MODEL=gemini-2.0-flash
+# Opcional: personalize o comportamento das legendas
+GEMINI_PROMPT=Escreva uma legenda curta e persuasiva em português do Brasil.
 
 TELEGRAM_BOT_TOKEN=token_do_seu_bot
 TELEGRAM_CHAT_ID=-1001234567890
@@ -116,6 +120,18 @@ TELEGRAM_SOURCE_SESSION=
 - `TELEGRAM_SOURCE_PHONE`: telefone da conta usada para monitorar as origens.
 - `TELEGRAM_SOURCE_CHATS`: grupos ou canais que serão monitorados.
 - `TELEGRAM_SOURCE_SESSION`: sessão serializada da conta de monitoramento.
+
+### Legendas com Gemini
+
+As legendas são geradas pelo Gemini a partir do texto limpo da promoção. A
+chave deve ficar somente no `.env` ou nas variáveis secretas do servidor:
+
+- `GEMINI_API_KEY`: chave da API Gemini.
+- `GEMINI_MODEL`: modelo usado na geração; por padrão, `gemini-2.0-flash`.
+- `GEMINI_PROMPT`: instruções opcionais para definir seu estilo de autoria.
+
+Se a chave não estiver configurada ou a API falhar, a aplicação registra o erro
+e não publica a oferta com uma legenda não processada.
 
 `TELEGRAM_SOURCE_CHATS` deve usar usernames públicos ou IDs numéricos, sempre
 separados por vírgula. Não use o nome exibido do grupo, especialmente se ele

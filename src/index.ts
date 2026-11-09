@@ -5,11 +5,13 @@ import express from 'express';
 import crypto from 'crypto';
 import { DatabaseService } from './services/database.service';
 import { TelegramProvider } from './providers/telegram.provider';
+import { GeminiService } from './services/gemini.service';
 import { TelegramSourceService } from './services/telegram-source.service';
 
 const app = express();
 const databaseService = new DatabaseService();
 const telegramProvider = new TelegramProvider();
+const geminiService = new GeminiService();
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (_req, res) => {
@@ -27,7 +29,8 @@ async function handleDealLink(affiliateUrl: string, sourceText: string, image?: 
     return;
   }
 
-  await telegramProvider.sendConvertedMessage(sourceText, affiliateUrl, image);
+  const caption = await geminiService.generateCaption(sourceText);
+  await telegramProvider.sendConvertedMessage(caption, affiliateUrl, image);
   databaseService.savePostedProduct(productId);
   console.log(`✅ [Promoliza] Oferta convertida e enviada: ${affiliateUrl}`);
 }

@@ -56,28 +56,40 @@ normal. A publicação é feita separadamente pelo token do bot.
 
 ```text
 .
-├── Dockerfile                  # Imagem de produção
-├── docker-compose.yml          # Execução do serviço com Docker
-├── package.json                # Scripts e dependências
-├── tsconfig.json               # Configuração do TypeScript
-├── .env                        # Variáveis locais; não versionar
-├── .local/
-│   └── posted-products.json    # Histórico persistente de links enviados
-└── src/
-    ├── index.ts                # Inicialização do HTTP e do monitoramento
-    ├── config/
-    │   └── env.config.ts       # Leitura e normalização das variáveis
-    ├── providers/
-    │   └── telegram.provider.ts # Publicação via Telegram Bot API
-    ├── services/
-    │   ├── database.service.ts # Controle de duplicidade e persistência
-    │   ├── link.service.ts     # Extração e resolução de URLs
-    │   └── telegram-source.service.ts # Monitoramento via conta de usuário
-    ├── types/
-    │   └── index.ts            # Tipos de produtos e mensagens
-    └── utils/
-        └── affiliate.ts         # Construção do link afiliado
+├── dist/                           # JavaScript compilado; gerado pelo build
+├── node_modules/                   # Dependências instaladas; gerado pelo npm
+├── src/
+│   ├── config/
+│   │   ├── env.config.ts            # Leitura e normalização das variáveis
+│   │   └── tokens.json              # Configuração local de tokens
+│   ├── providers/
+│   │   └── telegram.provider.ts     # Publicação via Telegram Bot API
+│   ├── services/
+│   │   ├── database.service.ts      # Controle de duplicidade e persistência
+│   │   ├── gemini.service.ts        # Geração das legendas com Gemini
+│   │   ├── link.service.ts          # Extração, resolução e encurtamento de URLs
+│   │   └── telegram-source.service.ts # Monitoramento via conta de usuário
+│   ├── types/
+│   │   └── index.ts                 # Tipos de produtos e mensagens
+│   ├── utils/
+│   │   └── affiliate.ts             # Construção do link afiliado
+│   └── index.ts                     # Inicialização do HTTP e do monitoramento
+├── state/                           # Diretório reservado para estado da aplicação
+├── .dockerignore                    # Arquivos ignorados no contexto do Docker
+├── .env                             # Variáveis locais e segredos; não versionar
+├── .env.example                     # Modelo de variáveis de ambiente
+├── .gitignore                       # Arquivos ignorados pelo Git
+├── Dockerfile                       # Imagem de produção
+├── docker-compose.yml               # Execução do serviço com Docker
+├── package-lock.json                # Versões exatas das dependências
+├── package.json                     # Scripts e dependências
+└── tsconfig.json                    # Configuração do TypeScript
 ```
+
+`dist/` e `node_modules/` aparecem depois da instalação e da compilação, mas
+são diretórios gerados e não fazem parte do código-fonte principal. O arquivo
+`.local/posted-products.json` é criado em tempo de execução para registrar
+links já publicados; ele pode não existir antes da primeira oferta processada.
 
 ## Pré-requisitos
 

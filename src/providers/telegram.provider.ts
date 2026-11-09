@@ -49,16 +49,29 @@ export class TelegramProvider implements IMessengerProvider {
     });
   }
 
-  async sendConvertedMessage(sourceText: string, affiliateUrl: string): Promise<void> {
+  async sendConvertedMessage(sourceText: string, affiliateUrl: string, image?: Buffer): Promise<void> {
     if (!this.botToken || !this.chatId) {
       throw new Error('Credenciais do Telegram não foram configuradas no .env');
     }
 
-    const response = await axios.post(`https://api.telegram.org/bot${this.botToken}/sendMessage`, {
-      chat_id: this.chatId,
-      text: `${sourceText}\n\n🛒 Acessar oferta: ${affiliateUrl}`,
-      disable_web_page_preview: false,
-    });
+    const caption = `${sourceText}\n\n🛒 Acessar oferta: ${affiliateUrl}`;
+    let response;
+
+    if (image) {
+      const form = new FormData();
+      const imageData = new ArrayBuffer(image.byteLength);
+      new Uint8Array(imageData).set(image);
+      form.append('chat_id', this.chatId);
+      form.append('photo', new Blob([imageData], { type: 'image/jpeg' }), 'promotion.jpg');
+      form.append('caption', caption);
+      response = await axios.post(`https://api.telegram.org/bot${this.botToken}/sendPhoto`, form);
+    } else {
+      response = await axios.post(`https://api.telegram.org/bot${this.botToken}/sendMessage`, {
+        chat_id: this.chatId,
+        text: caption,
+        disable_web_page_preview: false,
+      });
+    }
 
     this.assertTelegramSuccess(response.data);
   }

@@ -12,6 +12,10 @@ function isMercadoLivreHost(hostname: string): boolean {
   return MERCADO_LIVRE_HOSTS.has(normalizedHostname);
 }
 
+function isMercadoLivreProductUrl(url: URL): boolean {
+  return /(?:^|[/-])MLB-\d+(?:[/?-]|$)/i.test(url.pathname);
+}
+
 export async function resolveMercadoLivreLink(rawUrl: string): Promise<string | null> {
   let url: URL;
   try {
@@ -34,6 +38,10 @@ export async function resolveMercadoLivreLink(rawUrl: string): Promise<string | 
     );
     response.data.destroy();
     if (!isMercadoLivreHost(finalUrl.hostname)) return null;
+    if (!isMercadoLivreProductUrl(finalUrl)) {
+      console.log(`[Link] URL ignorada: não contém um produto do Mercado Livre: ${finalUrl.pathname}`);
+      return null;
+    }
     return buildAffiliateUrl(finalUrl.toString());
   } catch {
     return null;

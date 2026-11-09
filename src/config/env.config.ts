@@ -22,7 +22,7 @@ export const config = {
   },
   gemini: {
     apiKey: process.env.GEMINI_API_KEY || '',
-    model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+    model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
     prompt:
       process.env.GEMINI_PROMPT ||
       'Escreva uma legenda curta, persuasiva e natural em português do Brasil para uma promoção. ' +

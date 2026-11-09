@@ -27,24 +27,36 @@ export class GeminiService {
       throw new Error('GEMINI_API_KEY não foi configurada no .env');
     }
 
-    const response = await axios.post<GeminiResponse>(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.gemini.model)}:generateContent`,
-      {
-        systemInstruction: {
-          parts: [{ text: config.gemini.prompt }],
+    let response;
+    try {
+      response = await axios.post<GeminiResponse>(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.gemini.model)}:generateContent`,
+        {
+          systemInstruction: {
+            parts: [{ text: config.gemini.prompt }],
+          },
+          contents: [{ role: 'user', parts: [{ text: sourceText }] }],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 300,
+          },
         },
-        contents: [{ role: 'user', parts: [{ text: sourceText }] }],
-        generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 300,
+        {
+          params: { key: config.gemini.apiKey },
+          timeout: 20_000,
+          validateStatus: (status) => status >= 200 && status < 300,
         },
-      },
-      {
-        params: { key: config.gemini.apiKey },
-        timeout: 20_000,
-        validateStatus: (status) => status >= 200 && status < 300,
-      },
-    );
+      );
+    } catch (error: unknown) {
+      if (axios.isAxiosError<GeminiResponse>(error)) {
+        const apiMessage = error.response?.data?.error?.message;
+        throw new Error(
+          `Gemini recusou a solicitação (${error.response?.status || 'sem status'}): ` +
+            (apiMessage || error.message),
+        );
+      }
+      throw error;
+    }
 
     const caption = cleanCaption(
       response.data.candidates?.[0]?.content?.parts

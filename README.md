@@ -19,6 +19,8 @@ TELEGRAM_SOURCE_SESSION=
 `TELEGRAM_API_ID` e `TELEGRAM_API_HASH` são obtidos em
 [my.telegram.org](https://my.telegram.org). A conta usada em
 `TELEGRAM_SOURCE_PHONE` precisa estar autorizada nos grupos de origem.
+`TELEGRAM_SOURCE_CHATS` deve conter usernames (`@grupo`) ou IDs numéricos,
+separados por vírgula; use o username/ID, não o nome exibido do grupo.
 
 Na primeira execução, informe o código recebido no Telegram e a senha 2FA, se
 existir. O programa exibirá uma sessão; salve esse valor em

@@ -22,12 +22,14 @@ export class TelegramProvider implements IMessengerProvider {
     const url = `https://api.telegram.org/bot${this.botToken}/sendPhoto`;
     const fullCaption = `${payload.caption}\n\n🛒 <b>Compre aqui:</b> <a href="${payload.affiliateUrl}">Acessar Oferta</a>`;
 
-    await axios.post(url, {
+    const response = await axios.post(url, {
       chat_id: this.chatId,
       photo: payload.product.thumbnail,
       caption: fullCaption,
       parse_mode: 'HTML',
     });
+
+    this.assertTelegramSuccess(response.data);
   }
 
   async sendDealMessage(caption: string, thumbnail: string, affiliateUrl: string): Promise<void> {
@@ -52,10 +54,18 @@ export class TelegramProvider implements IMessengerProvider {
       throw new Error('Credenciais do Telegram não foram configuradas no .env');
     }
 
-    await axios.post(`https://api.telegram.org/bot${this.botToken}/sendMessage`, {
+    const response = await axios.post(`https://api.telegram.org/bot${this.botToken}/sendMessage`, {
       chat_id: this.chatId,
       text: `${sourceText}\n\n🛒 Acessar oferta: ${affiliateUrl}`,
       disable_web_page_preview: false,
     });
+
+    this.assertTelegramSuccess(response.data);
+  }
+
+  private assertTelegramSuccess(response: { ok?: boolean; description?: string }): void {
+    if (!response.ok) {
+      throw new Error(`Telegram recusou a mensagem: ${response.description || 'resposta inválida'}`);
+    }
   }
 }

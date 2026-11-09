@@ -27,6 +27,16 @@ function closePrompt(): void {
   terminal.close();
 }
 
+function validateSourceChats(chats: string[]): void {
+  const invalidChats = chats.filter((chat) => /\s/.test(chat) && !/^-?\d+$/.test(chat));
+  if (invalidChats.length > 0) {
+    throw new Error(
+      `TELEGRAM_SOURCE_CHATS contém identificadores inválidos: ${invalidChats.join(', ')}. ` +
+        'Use @username ou o ID numérico do grupo, não o nome exibido.',
+    );
+  }
+}
+
 export class TelegramSourceService {
   private readonly client: TelegramClient;
 
@@ -51,6 +61,8 @@ export class TelegramSourceService {
       );
     }
 
+    validateSourceChats(config.telegram.sourceChats);
+
     try {
       await this.client.start({
         phoneNumber: async () => config.telegram.sourcePhone,
@@ -66,7 +78,13 @@ export class TelegramSourceService {
     console.log(this.client.session.save());
 
     this.client.addEventHandler(
-      async (event: NewMessageEvent) => this.handleMessage(event),
+      async (event: NewMessageEvent) => {
+        try {
+          await this.handleMessage(event);
+        } catch (error: unknown) {
+          console.error('[TelegramSource] Erro ao processar mensagem:', error);
+        }
+      },
       new NewMessage({ chats: config.telegram.sourceChats }),
     );
   }

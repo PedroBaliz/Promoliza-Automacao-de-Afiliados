@@ -38,7 +38,10 @@ export class GeminiService {
           contents: [{ role: 'user', parts: [{ text: sourceText }] }],
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 300,
+            maxOutputTokens: 180,
+            thinkingConfig: {
+              thinkingBudget: 0,
+            },
           },
         },
         {
@@ -69,6 +72,7 @@ export class GeminiService {
       throw new Error(response.data.error?.message || 'Gemini não retornou uma legenda válida.');
     }
 
+    console.log(`[Gemini] Legenda gerada: "${caption.replace(/\s+/g, ' ').slice(0, 180)}"`);
     return caption;
   }
 }

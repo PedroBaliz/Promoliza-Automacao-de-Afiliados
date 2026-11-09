@@ -34,6 +34,10 @@ export async function resolveMercadoLivreLink(rawUrl: string): Promise<string | 
     );
     response.data.destroy();
     if (!isMercadoLivreHost(finalUrl.hostname)) return null;
+    if (/^\/social(?:\/|$)/i.test(finalUrl.pathname)) {
+      console.warn(`[Link] Destino ignorado: página de perfil do Mercado Livre: ${finalUrl.toString()}`);
+      return null;
+    }
     return buildAffiliateUrl(finalUrl.toString());
   } catch {
     return null;

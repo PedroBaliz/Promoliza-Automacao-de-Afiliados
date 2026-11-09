@@ -12,6 +12,8 @@ republica as promoções em um grupo de destino usando um bot do Telegram.
 - Resolução de redirecionamentos limitados.
 - Filtro para aceitar somente links dos domínios do Mercado Livre.
 - Conversão do link para o formato de afiliado configurado.
+- Remoção dos links da mensagem original antes da republicação.
+- Encurtamento do link afiliado publicado no grupo de destino.
 - Reenvio da mensagem para um grupo de destino.
 - Prevenção de republicação do mesmo link por 30 dias.
 - Persistência local do histórico de links publicados.
@@ -31,7 +33,7 @@ Grupo/canal de origem
 TelegramSourceService (conta de usuário)
         |
         v
-Extração e resolução do link
+Extração, resolução e encurtamento do link
         |
         v
 Conversão para link de afiliado
@@ -242,6 +244,11 @@ horas, o computador ou servidor que executa o Docker precisa permanecer ligado.
 Links que não pertencem aos domínios aceitos do Mercado Livre são ignorados.
 Links já publicados dentro do período de retenção também não são enviados
 novamente.
+
+Antes da republicação, os links da mensagem original são removidos para evitar
+que links de outros canais sejam enviados ao grupo de destino. O link afiliado
+final é encurtado pelo serviço is.gd. Se o encurtador estiver indisponível, a
+aplicação registra o erro e publica o link afiliado completo.
 
 ## Persistência e produção
 

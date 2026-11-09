@@ -65,6 +65,7 @@ export class TelegramProvider implements IMessengerProvider {
       form.append('photo', new Blob([imageData], { type: 'image/jpeg' }), 'promotion.jpg');
       form.append('caption', caption);
       response = await axios.post(`https://api.telegram.org/bot${this.botToken}/sendPhoto`, form);
+      console.log('[TelegramProvider] Foto enviada com legenda.');
     } else {
       response = await axios.post(`https://api.telegram.org/bot${this.botToken}/sendMessage`, {
         chat_id: this.chatId,

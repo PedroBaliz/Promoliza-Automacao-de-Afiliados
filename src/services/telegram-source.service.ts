@@ -151,7 +151,7 @@ export class TelegramSourceService {
 
         for (const message of newMessages) {
           this.lastMessageIds.set(chat.id, message.id);
-          await this.handleMessage(message, chat.id);
+          await this.handleMessage(message, chat);
         }
       }
     } catch (error: unknown) {
@@ -161,12 +161,24 @@ export class TelegramSourceService {
     }
   }
 
-  private async handleMessage(message: any, chatId: string): Promise<void> {
+  private async handleMessage(message: any, chat: { id: string; entity: any }): Promise<void> {
     const text = message.message || '';
     const preview = text.replace(/\s+/g, ' ').trim().slice(0, 100) || '[sem texto]';
     const rawUrls = collectMessageUrls(message);
+    const messageTime = message.date
+      ? new Intl.DateTimeFormat('pt-BR', {
+          dateStyle: 'short',
+          timeStyle: 'medium',
+          timeZone: 'America/Sao_Paulo',
+        }).format(new Date(message.date))
+      : 'horário desconhecido';
+    const chatName =
+      chat.entity.title ||
+      (chat.entity.username ? `@${chat.entity.username}` : undefined) ||
+      chat.id;
     console.log(
-      `[TelegramSource] Mensagem recebida: chat=${chatId} mensagem=${message.id} ` +
+      `[TelegramSource] Mensagem recebida: grupo="${chatName}" horário=${messageTime} ` +
+        `chat=${chat.id} mensagem=${message.id} ` +
         `"${preview}" (${rawUrls.length} URL(s) encontrada(s)).`,
     );
 
@@ -184,9 +196,15 @@ export class TelegramSourceService {
 
       const shortenedUrl = await shortenUrl(affiliateUrl);
       const cleanSourceText = removeLinksFromSourceText(text);
-      const downloadedMedia = message.photo ? await this.client.downloadMedia(message, {}) : undefined;
+      const hasImageMedia =
+        Boolean(message.photo) ||
+        message.media?.className === 'MessageMediaPhoto' ||
+        message.document?.mimeType?.startsWith('image/');
+      const downloadedMedia = hasImageMedia ? await this.client.downloadMedia(message, {}) : undefined;
       const image = Buffer.isBuffer(downloadedMedia) ? downloadedMedia : undefined;
-      console.log('[TelegramSource] Link do Mercado Livre encontrado; enviando somente o link afiliado.');
+      console.log(
+        `[TelegramSource] Link do Mercado Livre encontrado; mídia=${image ? `${image.length} bytes` : 'não encontrada'}.`,
+      );
       await this.onDealLink(shortenedUrl, cleanSourceText, image);
     }
   }

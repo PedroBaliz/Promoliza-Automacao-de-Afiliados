@@ -58,6 +58,7 @@ function collectMessageUrls(event: NewMessageEvent): string[] {
 
 export class TelegramSourceService {
   private readonly client: TelegramClient;
+  private sourceChatIds = new Set<string>();
 
   constructor(private readonly onDealLink: DealLinkHandler) {
     this.client = new TelegramClient(
@@ -107,16 +108,20 @@ export class TelegramSourceService {
         return chatId;
       }),
     );
+    this.sourceChatIds = new Set(sourceChatIds);
 
     this.client.addEventHandler(
       async (event: NewMessageEvent) => {
+        const chatId = event.chatId?.toString();
+        if (!chatId || !this.sourceChatIds.has(chatId)) return;
+
         try {
           await this.handleMessage(event);
         } catch (error: unknown) {
           console.error('[TelegramSource] Erro ao processar mensagem:', error);
         }
       },
-      new NewMessage({ chats: sourceChatIds }),
+      new NewMessage(),
     );
     console.log(`[TelegramSource] Monitorando ${sourceChatIds.length} chat(s) de origem.`);
   }

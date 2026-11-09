@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { config } from '../config/env.config';
 import { buildAffiliateUrl } from '../utils/affiliate';
 
 const MERCADO_LIVRE_HOSTS = new Set([
@@ -52,6 +53,23 @@ export async function resolveMercadoLivreLink(rawUrl: string): Promise<string | 
 
 export async function shortenUrl(url: string): Promise<string> {
   try {
+    if (config.bitlyAccessToken) {
+      const response = await axios.post<{ link?: string }>(
+        'https://api-ssl.bitly.com/v4/shorten',
+        { long_url: url },
+        {
+          headers: { Authorization: `Bearer ${config.bitlyAccessToken}` },
+          timeout: 10000,
+          validateStatus: (status) => status >= 200 && status < 300,
+        },
+      );
+      const shortenedUrl = response.data.link?.trim();
+      if (!shortenedUrl || !/^https?:\/\/bit\.ly\/[A-Za-z0-9]+$/i.test(shortenedUrl)) {
+        throw new Error('O Bitly retornou uma resposta inválida.');
+      }
+      return shortenedUrl;
+    }
+
     const response = await axios.get('https://is.gd/create.php', {
       params: { format: 'simple', url },
       timeout: 10000,

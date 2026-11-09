@@ -20,5 +20,6 @@ export const config = {
       .map((chat) => chat.trim())
       .filter(Boolean),
   },
+  bitlyAccessToken: process.env.BITLY_ACCESS_TOKEN || '',
   postedProductsFilePath: path.resolve(process.cwd(), '.local', 'posted-products.json'),
 };

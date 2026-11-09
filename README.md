@@ -110,7 +110,7 @@ NODE_ENV=production
 
 ML_AFFILIATE_TAG=seu_tag_de_afiliado
 GEMINI_API_KEY=sua_chave_da_api_do_gemini
-GEMINI_MODEL=gemini-2.0-flash
+GEMINI_MODEL=gemini-2.5-flash
 # Opcional: personalize o comportamento das legendas
 GEMINI_PROMPT=Escreva uma legenda curta e persuasiva em português do Brasil.
 
@@ -139,7 +139,7 @@ As legendas são geradas pelo Gemini a partir do texto limpo da promoção. A
 chave deve ficar somente no `.env` ou nas variáveis secretas do servidor:
 
 - `GEMINI_API_KEY`: chave da API Gemini.
-- `GEMINI_MODEL`: modelo usado na geração; por padrão, `gemini-2.0-flash`.
+- `GEMINI_MODEL`: modelo usado na geração; por padrão, `gemini-2.5-flash`.
 - `GEMINI_PROMPT`: instruções opcionais para definir seu estilo de autoria.
 
 Se a chave não estiver configurada ou a API falhar, a aplicação registra o erro

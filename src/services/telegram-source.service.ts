@@ -26,6 +26,12 @@ function closePrompt(): void {
   terminal.close();
 }
 
+function messageDateToDate(value: unknown): Date | undefined {
+  if (value instanceof Date) return value;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  return new Date(value < 10_000_000_000 ? value * 1000 : value);
+}
+
 function validateSourceChats(chats: string[]): void {
   const invalidChats = chats.filter((chat) => /\s/.test(chat) && !/^-?\d+$/.test(chat));
   if (invalidChats.length > 0) {
@@ -150,8 +156,17 @@ export class TelegramSourceService {
           .sort((left, right) => left.id - right.id);
 
         for (const message of newMessages) {
-          this.lastMessageIds.set(chat.id, message.id);
-          await this.handleMessage(message, chat);
+          try {
+            await this.handleMessage(message, chat);
+            this.lastMessageIds.set(chat.id, message.id);
+          } catch (error: unknown) {
+            console.error(
+              `[TelegramSource] Falha ao processar mensagem=${message.id}; ` +
+                'ela será tentada novamente no próximo ciclo:',
+              error,
+            );
+            break;
+          }
         }
       }
     } catch (error: unknown) {
@@ -165,12 +180,13 @@ export class TelegramSourceService {
     const text = message.message || '';
     const preview = text.replace(/\s+/g, ' ').trim().slice(0, 100) || '[sem texto]';
     const rawUrls = collectMessageUrls(message);
-    const messageTime = message.date
+    const messageDate = messageDateToDate(message.date);
+    const messageTime = messageDate
       ? new Intl.DateTimeFormat('pt-BR', {
           dateStyle: 'short',
           timeStyle: 'medium',
           timeZone: 'America/Sao_Paulo',
-        }).format(new Date(message.date))
+        }).format(messageDate)
       : 'horário desconhecido';
     const chatName =
       chat.entity.title ||

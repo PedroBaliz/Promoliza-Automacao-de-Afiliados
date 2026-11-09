@@ -49,12 +49,12 @@ export class TelegramProvider implements IMessengerProvider {
     });
   }
 
-  async sendConvertedMessage(sourceText: string, affiliateUrl: string, image?: Buffer): Promise<void> {
+  async sendConvertedMessage(sourceCaption: string, affiliateUrl: string, image?: Buffer): Promise<void> {
     if (!this.botToken || !this.chatId) {
       throw new Error('Credenciais do Telegram não foram configuradas no .env');
     }
 
-    const caption = `${sourceText}\n\n🛒 Acessar oferta: ${affiliateUrl}`;
+    const caption = `${sourceCaption}\n\n🛒 Acessar oferta: ${affiliateUrl}`;
     let response;
 
     if (image) {

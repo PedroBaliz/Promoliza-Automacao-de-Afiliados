@@ -4,7 +4,7 @@ import readline from 'readline';
 import { config } from '../config/env.config';
 import { extractUrls, resolveMercadoLivreLink, shortenUrl } from './link.service';
 
-export type DealLinkHandler = (url: string, sourceText: string, image?: Buffer) => Promise<void>;
+export type DealLinkHandler = (url: string, sourceCaption: string, image?: Buffer) => Promise<void>;
 
 const terminal = readline.createInterface({
   input: process.stdin,
@@ -211,7 +211,7 @@ export class TelegramSourceService {
       }
 
       const shortenedUrl = await shortenUrl(affiliateUrl);
-      const cleanSourceText = removeLinksFromSourceText(text);
+      const sourceCaption = removeLinksFromSourceText(text);
       const hasImageMedia =
         Boolean(message.photo) ||
         message.media?.className === 'MessageMediaPhoto' ||
@@ -221,7 +221,7 @@ export class TelegramSourceService {
       console.log(
         `[TelegramSource] Link do Mercado Livre encontrado; mídia=${image ? `${image.length} bytes` : 'não encontrada'}.`,
       );
-      await this.onDealLink(shortenedUrl, cleanSourceText, image);
+      await this.onDealLink(shortenedUrl, sourceCaption, image);
     }
   }
 }

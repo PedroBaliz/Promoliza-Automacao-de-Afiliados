@@ -66,7 +66,6 @@ normal. A publicação é feita separadamente pelo token do bot.
 │   │   └── telegram.provider.ts     # Publicação via Telegram Bot API
 │   ├── services/
 │   │   ├── database.service.ts      # Controle de duplicidade e persistência
-│   │   ├── gemini.service.ts        # Geração das legendas com Gemini
 │   │   ├── link.service.ts          # Extração, resolução e encurtamento de URLs
 │   │   └── telegram-source.service.ts # Monitoramento via conta de usuário
 │   ├── types/
@@ -109,10 +108,6 @@ PORT=3000
 NODE_ENV=production
 
 ML_AFFILIATE_TAG=seu_tag_de_afiliado
-GEMINI_API_KEY=sua_chave_da_api_do_gemini
-GEMINI_MODEL=gemini-2.5-flash
-# Opcional: personalize o comportamento das legendas
-GEMINI_PROMPT=Crie UMA única legenda curta e persuasiva em português do Brasil. Retorne somente a legenda final, sem lista, sem hashtags e sem links.
 
 TELEGRAM_BOT_TOKEN=token_do_seu_bot
 TELEGRAM_CHAT_ID=-1001234567890

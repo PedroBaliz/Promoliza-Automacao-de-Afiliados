@@ -20,14 +20,5 @@ export const config = {
       .map((chat) => chat.trim())
       .filter(Boolean),
   },
-  gemini: {
-    apiKey: process.env.GEMINI_API_KEY || '',
-    model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
-    prompt:
-      process.env.GEMINI_PROMPT ||
-      'Crie UMA única legenda curta, persuasiva e natural em português do Brasil para esta oferta. ' +
-        'Preserve produto, preço e cupom quando existirem. Retorne somente a legenda final, sem ' +
-        'introdução, sem lista de opções, sem aspas, sem hashtags e sem links. Não invente informações.',
-  },
   postedProductsFilePath: path.resolve(process.cwd(), '.local', 'posted-products.json'),
 };

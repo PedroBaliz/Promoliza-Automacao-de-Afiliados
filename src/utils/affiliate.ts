@@ -14,6 +14,12 @@ export function buildAffiliateUrl(originalUrl: string): string {
     if (affiliateTag.startsWith('matt:')) {
       const [, mattWord, mattTool] = affiliateTag.split(':');
       if (mattWord && mattTool) {
+        if (/^\/social\/[^/]+(?:\/|$)/i.test(url.pathname)) {
+          url.pathname = url.pathname.replace(
+            /^\/social\/[^/]+/i,
+            `/social/${encodeURIComponent(mattWord)}`,
+          );
+        }
         url.searchParams.set('matt_word', mattWord);
         url.searchParams.set('matt_tool', mattTool);
       }

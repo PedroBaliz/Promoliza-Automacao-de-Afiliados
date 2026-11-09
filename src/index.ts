@@ -20,14 +20,14 @@ app.listen(PORT, () => {
   console.log(`🌐 [HTTP] Servidor Web ativo na porta ${PORT}`);
 });
 
-async function handleDealLink(affiliateUrl: string, sourceText: string, image?: Buffer): Promise<void> {
+async function handleDealLink(affiliateUrl: string, sourceCaption: string, image?: Buffer): Promise<void> {
   const productId = `ml_link_${crypto.createHash('sha256').update(affiliateUrl).digest('hex').slice(0, 32)}`;
   if (databaseService.isProductPosted(productId)) {
     console.log(`[Promoliza] Oferta ignorada: link já enviado nos últimos 30 dias.`);
     return;
   }
 
-  await telegramProvider.sendConvertedMessage(sourceText, affiliateUrl, image);
+  await telegramProvider.sendConvertedMessage(sourceCaption, affiliateUrl, image);
   databaseService.savePostedProduct(productId);
   console.log(`✅ [Promoliza] Oferta convertida e enviada: ${affiliateUrl}`);
 }

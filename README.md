@@ -108,7 +108,6 @@ PORT=3000
 NODE_ENV=production
 
 ML_AFFILIATE_TAG=seu_tag_de_afiliado
-BITLY_ACCESS_TOKEN=seu_token_bitly
 
 TELEGRAM_BOT_TOKEN=token_do_seu_bot
 TELEGRAM_CHAT_ID=-1001234567890
@@ -264,9 +263,9 @@ Links já publicados dentro do período de retenção também não são enviados
 novamente.
 
 Antes da republicação, os links da mensagem original são removidos para evitar
-que links de outros canais sejam enviados ao grupo de destino. O link afiliado final é encurtado pelo Bitly quando `BITLY_ACCESS_TOKEN` está
-configurado. Sem esse token, o sistema usa o is.gd; se o encurtador estiver
-indisponível, publica o link afiliado completo.
+que links de outros canais sejam enviados ao grupo de destino. O link afiliado final
+é encurtado pelo is.gd; se o encurtador estiver indisponível, publica o link
+afiliado completo.
 
 ## Persistência e produção
 

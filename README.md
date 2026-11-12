@@ -158,7 +158,7 @@ separados por vírgula. Não use o nome exibido do grupo, especialmente se ele
 tiver espaços ou caracteres especiais:
 
 ```env
-TELEGRAM_SOURCE_CHATS=@cuponsdomeli,@urubupromo,-1001234567890
+TELEGRAM_SOURCE_CHATS=@grupovizinhos,@promoml,-1001234567890
 ```
 
 O grupo de origem é o local que será rastreado. O grupo configurado em

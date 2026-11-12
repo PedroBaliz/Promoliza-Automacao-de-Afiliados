@@ -1,8 +1,14 @@
-# Promoliza
+# Promoliza — Automação de Afiliados no Telegram
 
-Bot que monitora canais e grupos do Telegram usando uma conta de usuário,
-identifica links do Mercado Livre, converte esses links para afiliado e
-republica as promoções em um grupo de destino usando um bot do Telegram.
+Bot em TypeScript/Node.js que monitora canais e grupos do Telegram, identifica
+links do Mercado Livre, converte esses links para links de afiliado e
+republica as promoções em um grupo de destino.
+
+> **Automação de marketing de afiliados e ofertas do Mercado Livre no Telegram.**
+
+O projeto combina uma conta de usuário do Telegram para monitoramento com um
+bot do Telegram para publicação. É adequado para automação de ofertas,
+cupons, promoções e distribuição de links afiliados.
 
 ## Funcionalidades
 
@@ -23,6 +29,10 @@ republica as promoções em um grupo de destino usando um bot do Telegram.
 > O serviço não lê mensagens antigas anteriores ao início do monitoramento.
 > A conta usada na sessão precisa conseguir visualizar os grupos ou canais de
 > origem.
+>
+> O bot processa as promoções conforme elas chegam. Ele não cria um timer
+> próprio para limitar a quantidade de publicações; caso os grupos de origem já
+> controlem a frequência, esse comportamento é preservado.
 
 ## Fluxo da aplicação
 
@@ -76,7 +86,6 @@ normal. A publicação é feita separadamente pelo token do bot.
 ├── state/                           # Diretório reservado para estado da aplicação
 ├── .dockerignore                    # Arquivos ignorados no contexto do Docker
 ├── .env                             # Variáveis locais e segredos; não versionar
-├── .env.example                     # Modelo de variáveis de ambiente
 ├── .gitignore                       # Arquivos ignorados pelo Git
 ├── Dockerfile                       # Imagem de produção
 ├── docker-compose.yml               # Execução do serviço com Docker
@@ -89,6 +98,17 @@ normal. A publicação é feita separadamente pelo token do bot.
 são diretórios gerados e não fazem parte do código-fonte principal. O arquivo
 `.local/posted-products.json` é criado em tempo de execução para registrar
 links já publicados; ele pode não existir antes da primeira oferta processada.
+
+## Início rápido
+
+```powershell
+npm ci
+npm run build
+npm run dev
+```
+
+Antes de iniciar, configure o `.env` e gere a sessão do Telegram conforme as
+instruções abaixo.
 
 ## Pré-requisitos
 
@@ -279,14 +299,40 @@ Esse diretório está no `.gitignore`. Em servidores ou plataformas como Railway
 monte um volume persistente em `/app/.local`; sem isso, um novo deploy pode
 apagar o histórico e permitir republicações.
 
+O histórico local não é um banco de dados e a fila de processamento não é
+persistente. Para um ambiente de produção com múltiplas instâncias ou
+reinícios frequentes, migre o histórico e a fila para PostgreSQL ou Redis.
+
+### Deploy no Railway
+
+O projeto pode ser publicado como um serviço Docker no Railway:
+
+1. Crie um projeto em [railway.com](https://railway.com) e escolha **Deploy
+   from GitHub Repo**.
+2. Selecione este repositório. O Railway detectará o `Dockerfile`.
+3. Configure as variáveis do `.env` em **Variables**. Não versione o `.env`.
+4. Gere um domínio público e acesse `/` para verificar o serviço.
+5. Se o histórico local precisar sobreviver a reinícios, configure um volume
+   montado em `/app/.local`.
+
+O Railway fornece a variável `PORT` automaticamente. O serviço já escuta essa
+porta, portanto não é necessário fixar `PORT=3000` no ambiente de produção.
+
 Para hospedar o processo continuamente, prefira uma VPS, Railway ou outro
 serviço que mantenha processos de longa duração. Plataformas serverless, como
-a Vercel, não são adequadas para a conexão permanente com o Telegram.
+a Vercel, não são a escolha adequada para esta conexão permanente com o
+Telegram.
 
 ## Segurança
 
 - Nunca versione o arquivo `.env`.
 - Nunca compartilhe `TELEGRAM_SOURCE_SESSION`.
 - Nunca compartilhe `TELEGRAM_BOT_TOKEN` ou `TELEGRAM_API_HASH`.
-- Se alguma credencial for exposta, revogue o token no BotFather e gere uma
-  nova sessão da conta do Telegram.
+- Se alguma credencial for exposta, revogue o token no BotFather, gere um novo
+  API Hash em [my.telegram.org](https://my.telegram.org) e crie uma nova sessão
+  da conta do Telegram.
+
+## Palavras-chave
+
+bot do Telegram, marketing de afiliados, links afiliados, Mercado Livre,
+automação de ofertas, bot de cupons, Node.js, TypeScript.

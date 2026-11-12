@@ -151,8 +151,7 @@ TELEGRAM_SOURCE_SESSION=
 ### Texto original da promoção
 
 O bot publica diretamente a mensagem original do grupo de origem, removendo
-os links encontrados nela e acrescentando o link afiliado processado. O Gemini
-não é necessário para a publicação.
+os links encontrados nela e acrescentando o link afiliado processado.
 
 `TELEGRAM_SOURCE_CHATS` deve usar usernames públicos ou IDs numéricos, sempre
 separados por vírgula. Não use o nome exibido do grupo, especialmente se ele

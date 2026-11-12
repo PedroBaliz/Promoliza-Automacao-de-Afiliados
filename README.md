@@ -8,7 +8,7 @@ republica as promoções em um grupo de destino.
 
 O projeto combina uma conta de usuário do Telegram para monitoramento com um
 bot do Telegram para publicação. É adequado para automação de ofertas,
-cupons, promoções e distribuição de links afiliados.
+cupons, promoções e distribuição de links de afiliados.
 
 ## Funcionalidades
 

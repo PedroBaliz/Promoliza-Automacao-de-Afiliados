@@ -31,19 +31,14 @@ async function handleDealLink(affiliateUrl: string, sourceCaption: string, image
 
   const caption = `${sourceCaption}\n\n🛒 Acessar oferta: ${affiliateUrl}`;
 
-  const [telegramResult, whatsappResult] = await Promise.allSettled([
-    telegramProvider.sendConvertedMessage(sourceCaption, affiliateUrl, image),
-    whatsappProvider.sendMessage(caption, image),
-  ]);
+  // Telegram é o canal principal: se falhar, o erro sobe e a mensagem é tentada de novo no próximo ciclo.
+  await telegramProvider.sendConvertedMessage(sourceCaption, affiliateUrl, image);
 
-  if (telegramResult.status === 'rejected') {
-    console.error('❌ [Telegram] Falha ao enviar oferta:', telegramResult.reason);
-  }
-  if (whatsappResult.status === 'rejected') {
-    console.error('❌ [WhatsApp] Falha ao enviar oferta:', whatsappResult.reason);
-  }
-  if (telegramResult.status === 'rejected' && whatsappResult.status === 'rejected') {
-    throw new Error('Oferta não foi publicada em nenhum canal.');
+  // WhatsApp é opcional: uma falha aqui nunca bloqueia nem duplica a publicação no Telegram.
+  try {
+    await whatsappProvider.sendMessage(caption, image);
+  } catch (error: unknown) {
+    console.error('❌ [WhatsApp] Falha ao enviar oferta:', error);
   }
 
   databaseService.savePostedProduct(productId);

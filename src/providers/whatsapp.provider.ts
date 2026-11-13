@@ -1,10 +1,7 @@
-import makeWASocket, {
-  DisconnectReason,
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion,
-  makeCacheableSignalKeyStore,
-} from '@whiskeysockets/baileys';
-import { Boom } from '@hapi/boom';
+// Baileys é ESM e só é carregado (via import dinâmico) quando o WhatsApp está habilitado,
+// para que o app continue subindo normalmente sem WHATSAPP_GROUP_JID.
+import type { WASocket } from '@whiskeysockets/baileys';
+import type { Boom } from '@hapi/boom';
 import path from 'path';
 import fs from 'fs';
 import P from 'pino';
@@ -14,7 +11,7 @@ const SESSION_DIR = path.resolve(process.cwd(), '.local', 'whatsapp-session');
 const CONNECTION_WAIT_MS = 30_000;
 
 export class WhatsAppProvider {
-  private socket: ReturnType<typeof makeWASocket> | null = null;
+  private socket: WASocket | null = null;
   private readonly groupJid: string;
   private connected = false;
   private readonly connectionReady: Promise<void>;
@@ -36,6 +33,13 @@ export class WhatsAppProvider {
   }
 
   private async connect(): Promise<void> {
+    const {
+      default: makeWASocket,
+      DisconnectReason,
+      useMultiFileAuthState,
+      fetchLatestBaileysVersion,
+      makeCacheableSignalKeyStore,
+    } = await import('@whiskeysockets/baileys');
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
     const logger = P({ level: 'silent' });

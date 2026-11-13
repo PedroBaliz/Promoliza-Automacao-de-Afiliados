@@ -20,5 +20,8 @@ export const config = {
       .map((chat) => chat.trim())
       .filter(Boolean),
   },
+  whatsapp: {
+    groupJid: process.env.WHATSAPP_GROUP_JID || '',
+  },
   postedProductsFilePath: path.resolve(process.cwd(), '.local', 'posted-products.json'),
 };

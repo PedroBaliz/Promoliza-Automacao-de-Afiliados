@@ -6,10 +6,12 @@ import crypto from 'crypto';
 import { DatabaseService } from './services/database.service';
 import { TelegramProvider } from './providers/telegram.provider';
 import { TelegramSourceService } from './services/telegram-source.service';
+import { WhatsAppProvider } from './providers/whatsapp.provider';
 
 const app = express();
 const databaseService = new DatabaseService();
 const telegramProvider = new TelegramProvider();
+const whatsappProvider = new WhatsAppProvider();
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (_req, res) => {
@@ -27,12 +29,34 @@ async function handleDealLink(affiliateUrl: string, sourceCaption: string, image
     return;
   }
 
-  await telegramProvider.sendConvertedMessage(sourceCaption, affiliateUrl, image);
+  const caption = `${sourceCaption}\n\n🛒 Acessar oferta: ${affiliateUrl}`;
+
+  const [telegramResult, whatsappResult] = await Promise.allSettled([
+    telegramProvider.sendConvertedMessage(sourceCaption, affiliateUrl, image),
+    whatsappProvider.sendMessage(caption, image),
+  ]);
+
+  if (telegramResult.status === 'rejected') {
+    console.error('❌ [Telegram] Falha ao enviar oferta:', telegramResult.reason);
+  }
+  if (whatsappResult.status === 'rejected') {
+    console.error('❌ [WhatsApp] Falha ao enviar oferta:', whatsappResult.reason);
+  }
+  if (telegramResult.status === 'rejected' && whatsappResult.status === 'rejected') {
+    throw new Error('Oferta não foi publicada em nenhum canal.');
+  }
+
   databaseService.savePostedProduct(productId);
   console.log(`✅ [Promoliza] Oferta convertida e enviada: ${affiliateUrl}`);
 }
 
 async function start(): Promise<void> {
+  if (process.env.WHATSAPP_GROUP_JID) {
+    await whatsappProvider.start();
+  } else {
+    console.log('[WhatsApp] WHATSAPP_GROUP_JID não configurado; publicação no WhatsApp desabilitada.');
+  }
+
   const source = new TelegramSourceService(handleDealLink);
   await source.start();
 }

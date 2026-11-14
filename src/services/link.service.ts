@@ -1,5 +1,11 @@
 import axios from 'axios';
 import { buildAffiliateUrl } from '../utils/affiliate';
+import { describeError } from '../utils/errors';
+
+const MAX_REDIRECTS = 5;
+const REQUEST_TIMEOUT_MS = 10_000;
+const BROWSER_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 
 const MERCADO_LIVRE_HOSTS = new Set([
   'mercadolivre.com.br',
@@ -9,56 +15,153 @@ const MERCADO_LIVRE_HOSTS = new Set([
   'meli.la',
 ]);
 
-function isMercadoLivreHost(hostname: string): boolean {
-  const normalizedHostname = hostname.toLowerCase().replace(/^www\./, '');
+// Encurtadores que grupos de ofertas costumam usar por cima do link do ML.
+// Só esses hosts (e os do ML) são acessados: qualquer outro é descartado antes de
+// qualquer requisição, para o bot não ser usado para acessar endereços internos (SSRF).
+const SHORTENER_HOSTS = new Set([
+  'bit.ly',
+  'tinyurl.com',
+  'is.gd',
+  'cutt.ly',
+  'shorturl.at',
+  'encurtador.com.br',
+  'abre.ai',
+  'rebrand.ly',
+  'ow.ly',
+  'tiny.cc',
+  't.co',
+]);
+
+function normalizeHost(hostname: string): string {
+  return hostname.toLowerCase().replace(/\.$/, '').replace(/^www\./, '');
+}
+
+export function isMercadoLivreHost(hostname: string): boolean {
+  const host = normalizeHost(hostname);
   return (
-    MERCADO_LIVRE_HOSTS.has(normalizedHostname) ||
-    normalizedHostname.endsWith('.mercadolivre.com.br') ||
-    normalizedHostname.endsWith('.mercadolivre.com') ||
-    normalizedHostname.endsWith('.mercadolibre.com')
+    MERCADO_LIVRE_HOSTS.has(host) ||
+    host.endsWith('.mercadolivre.com.br') ||
+    host.endsWith('.mercadolivre.com') ||
+    host.endsWith('.mercadolibre.com')
   );
 }
 
-export async function resolveMercadoLivreLink(rawUrl: string): Promise<string | null> {
-  let url: URL;
+function isAllowedHop(url: URL): boolean {
+  if (!['http:', 'https:'].includes(url.protocol)) return false;
+  if (url.username || url.password) return false;
+  return isMercadoLivreHost(url.hostname) || SHORTENER_HOSTS.has(normalizeHost(url.hostname));
+}
+
+/**
+ * Chave de deduplicação estável para o mesmo produto, independente do encurtador, do
+ * grupo de origem ou dos parâmetros de rastreio: o ID MLB quando existe, senão a URL
+ * canônica sem query.
+ */
+// Parâmetros que mudam a cada compartilhamento sem mudar a oferta.
+const TRACKING_PARAM_PATTERN = /^(utm_.*|matt_.*|tag|ref|tracking_id|c_id|c_uid|sid|source|forceinapp|reco_.*)$/i;
+
+export function buildDedupKey(url: URL): string {
+  const mlbId = url.href.match(/MLB-?(\d{5,})/i);
+  if (mlbId) return `ml:MLB${mlbId[1]}`;
+
+  // Sem ID de produto: a query distingue ofertas diferentes na mesma página (ex.: /ofertas?promotion_id=...).
+  const path = url.pathname.replace(/\/+$/, '').toLowerCase();
+  const query = [...url.searchParams.entries()]
+    .filter(([name]) => !TRACKING_PARAM_PATTERN.test(name))
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, value]) => `${name}=${value}`)
+    .join('&');
+  return `ml:url:${normalizeHost(url.hostname)}${path}${query ? `?${query}` : ''}`;
+}
+
+export interface ResolvedDeal {
+  finalUrl: string;
+  affiliateUrl: string;
+  dedupKey: string;
+}
+
+export async function resolveMercadoLivreLink(rawUrl: string): Promise<ResolvedDeal | null> {
+  let current: URL;
   try {
-    url = new URL(rawUrl);
+    current = new URL(rawUrl);
   } catch {
     return null;
   }
 
-  if (!['http:', 'https:'].includes(url.protocol)) return null;
-
-  try {
-    const response = await axios.get(url.toString(), {
-      maxRedirects: 5,
-      timeout: 10000,
-      responseType: 'stream',
-      validateStatus: (status) => status >= 200 && status < 400,
-    });
-    const finalUrl = new URL(
-      response.request?.res?.responseUrl || response.request?.responseURL || url.toString(),
-    );
-    response.data.destroy();
-    if (!isMercadoLivreHost(finalUrl.hostname)) {
-      console.log(`[Link] URL ignorada: destino fora do Mercado Livre: ${finalUrl.toString()}`);
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    if (!isAllowedHop(current)) {
+      console.log(`[Link] URL ignorada: host não permitido (${current.hostname || current.protocol}).`);
       return null;
     }
-    return buildAffiliateUrl(finalUrl.toString());
-  } catch {
-    return null;
+
+    let response;
+    try {
+      // Redirecionamentos são seguidos manualmente para revalidar o host em cada salto.
+      response = await axios.get(current.toString(), {
+        maxRedirects: 0,
+        timeout: REQUEST_TIMEOUT_MS,
+        responseType: 'stream',
+        headers: { 'User-Agent': BROWSER_USER_AGENT },
+        validateStatus: () => true,
+      });
+    } catch (error) {
+      console.log(`[Link] Falha ao acessar ${current.hostname}: ${describeError(error)}`);
+      return null;
+    }
+    response.data?.destroy?.();
+
+    const location = response.headers?.location;
+    if (response.status >= 300 && response.status < 400 && typeof location === 'string') {
+      try {
+        current = new URL(location, current);
+      } catch {
+        return null;
+      }
+      continue;
+    }
+
+    // 403/429 do ML costumam ser bloqueio de robô: o link continua válido para o usuário.
+    const acceptable = response.status < 300 || [403, 429].includes(response.status);
+    if (!acceptable) {
+      console.log(`[Link] URL ignorada: HTTP ${response.status} em ${current.hostname}.`);
+      return null;
+    }
+
+    if (!isMercadoLivreHost(current.hostname)) {
+      console.log(`[Link] URL ignorada: destino fora do Mercado Livre (${current.hostname}).`);
+      return null;
+    }
+
+    // meli.la é o encurtador de afiliado do ML: se ele não redirecionou (ex.: 403 de robô),
+    // publicá-lo manteria a atribuição de quem criou o link, não a nossa.
+    if (normalizeHost(current.hostname) === 'meli.la') {
+      console.log(`[Link] URL ignorada: meli.la não redirecionou (HTTP ${response.status}).`);
+      return null;
+    }
+
+    // Vitrine de afiliado (/social/<afiliado>): o próprio caminho credita o afiliado da origem.
+    if (/^\/social\//i.test(current.pathname)) {
+      console.log('[Link] URL ignorada: vitrine de afiliado de terceiros (/social/).');
+      return null;
+    }
+
+    const finalUrl = current.toString();
+    return { finalUrl, affiliateUrl: buildAffiliateUrl(finalUrl), dedupKey: buildDedupKey(current) };
   }
+
+  console.log('[Link] URL ignorada: redirecionamentos demais.');
+  return null;
 }
 
 export async function shortenUrl(url: string): Promise<string> {
   try {
     const response = await axios.get('https://is.gd/create.php', {
       params: { format: 'simple', url },
-      timeout: 10000,
+      timeout: REQUEST_TIMEOUT_MS,
       responseType: 'text',
       validateStatus: (status) => status >= 200 && status < 300,
     });
-    const shortenedUrl = response.data.trim();
+    const shortenedUrl = String(response.data).trim();
 
     if (!/^https?:\/\/is\.gd\/[A-Za-z0-9]+$/.test(shortenedUrl)) {
       throw new Error('O encurtador retornou uma resposta inválida.');
@@ -66,12 +169,16 @@ export async function shortenUrl(url: string): Promise<string> {
 
     return shortenedUrl;
   } catch (error) {
-    console.error('[Link] Não foi possível encurtar o link afiliado; usando o link completo:', error);
+    console.error(`[Link] Não foi possível encurtar o link afiliado; usando o link completo: ${describeError(error)}`);
     return url;
   }
 }
 
+// Só caracteres válidos em URL: emoji, "…", "»" e aspas grudados no link ficam de fora.
+const URL_PATTERN = /https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'*+,;=%]+/gi;
+
 export function extractUrls(text: string): string[] {
-  return [...new Set(text.match(/https?:\/\/[^\s<>()]+/gi) || [])]
-    .map((url) => url.replace(/[.,!?;:]+$/, ''));
+  const urls = (text.match(URL_PATTERN) || []).map((url) => url.replace(/[.,!?;:'*]+$/, ''));
+  // Deduplica depois de limpar a pontuação, senão "link." e "link" contam como dois.
+  return [...new Set(urls)];
 }

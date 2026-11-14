@@ -5,3 +5,9 @@ dist/
 logs/
 src/config/tokens.json
 src/config/posted-products.json
+.env.*
+!.env.example
+state/
+*.session
+auth_info*
+.claude/settings.local.json

@@ -1,51 +1,80 @@
-// Baileys é ESM e só é carregado (via import dinâmico) quando o WhatsApp está habilitado,
-// para que o app continue subindo normalmente sem WHATSAPP_GROUP_JID.
-import type { WASocket } from '@whiskeysockets/baileys';
+// Baileys é um pacote ESM e só é carregado quando o WhatsApp está habilitado.
+// Com "module": "CommonJS", o TypeScript compila o import() abaixo para require(),
+// o que exige Node >= 22.12 (require de ESM sem flag).
+import type { WASocket, WAVersion } from '@whiskeysockets/baileys';
 import type { Boom } from '@hapi/boom';
 import path from 'path';
 import fs from 'fs';
 import P from 'pino';
 import qrcode from 'qrcode-terminal';
+import { config } from '../config/env.config';
+import { describeError } from '../utils/errors';
+import { sleep, withTimeout } from '../utils/timeout';
+
+type Baileys = typeof import('@whiskeysockets/baileys');
 
 const SESSION_DIR = path.resolve(process.cwd(), '.local', 'whatsapp-session');
-const CONNECTION_WAIT_MS = 30_000;
+// Só logo após o boot vale esperar a conexão; depois disso, sem conexão = ignora na hora.
+const INITIAL_CONNECTION_WAIT_MS = 30_000;
+const SEND_TIMEOUT_MS = 30_000;
+const VERSION_FETCH_TIMEOUT_MS = 10_000;
+const RECONNECT_BASE_MS = 2_000;
+const RECONNECT_MAX_MS = 5 * 60_000;
 
 export class WhatsAppProvider {
+  private baileys: Baileys | null = null;
+  private version: WAVersion | undefined;
   private socket: WASocket | null = null;
-  private readonly groupJid: string;
   private connected = false;
+  private stopped = false;
+  private startedAt = 0;
+  private reconnectAttempts = 0;
+  private reconnectTimer: NodeJS.Timeout | undefined;
   private readonly connectionReady: Promise<void>;
   private resolveReady!: () => void;
 
-  constructor() {
-    this.groupJid = process.env.WHATSAPP_GROUP_JID || '';
+  constructor(private readonly groupJid: string = config.whatsapp.groupJid) {
     this.connectionReady = new Promise((resolve) => {
       this.resolveReady = resolve;
     });
+  }
+
+  get enabled(): boolean {
+    return Boolean(this.groupJid);
   }
 
   async start(): Promise<void> {
     if (!this.groupJid) {
       throw new Error('Configure WHATSAPP_GROUP_JID no .env para usar o WhatsAppProvider.');
     }
+    this.startedAt = Date.now();
     fs.mkdirSync(SESSION_DIR, { recursive: true });
+    this.baileys = await import('@whiskeysockets/baileys');
+
+    // Busca a versão uma única vez (não a cada reconexão) e sem travar a inicialização.
+    try {
+      const { version } = await withTimeout(
+        this.baileys.fetchLatestBaileysVersion(),
+        VERSION_FETCH_TIMEOUT_MS,
+        '[WhatsApp] versão do Baileys',
+      );
+      this.version = version;
+    } catch (error) {
+      console.warn(`[WhatsApp] Não foi possível buscar a versão mais recente; usando a embutida: ${describeError(error)}`);
+    }
+
     await this.connect();
   }
 
   private async connect(): Promise<void> {
-    const {
-      default: makeWASocket,
-      DisconnectReason,
-      useMultiFileAuthState,
-      fetchLatestBaileysVersion,
-      makeCacheableSignalKeyStore,
-    } = await import('@whiskeysockets/baileys');
+    if (this.stopped || !this.baileys) return;
+    const { default: makeWASocket, useMultiFileAuthState, makeCacheableSignalKeyStore } = this.baileys;
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
-    const { version } = await fetchLatestBaileysVersion();
     const logger = P({ level: 'silent' });
 
-    this.socket = makeWASocket({
-      version,
+    this.disposeSocket();
+    const socket = makeWASocket({
+      ...(this.version ? { version: this.version } : {}),
       auth: {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, logger),
@@ -53,10 +82,12 @@ export class WhatsAppProvider {
       logger,
       markOnlineOnConnect: false,
     });
+    this.socket = socket;
 
-    this.socket.ev.on('creds.update', saveCreds);
-
-    this.socket.ev.on('connection.update', (update) => {
+    socket.ev.on('creds.update', saveCreds);
+    socket.ev.on('connection.update', (update) => {
+      // Evento atrasado de um socket antigo não pode mexer no estado do atual.
+      if (socket !== this.socket) return;
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
@@ -67,49 +98,83 @@ export class WhatsAppProvider {
 
       if (connection === 'open') {
         this.connected = true;
+        this.reconnectAttempts = 0;
         this.resolveReady();
         console.log('[WhatsApp] Conectado com sucesso.');
       }
 
       if (connection === 'close') {
         this.connected = false;
-        const shouldReconnect =
-          (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-
-        if (shouldReconnect) {
-          console.log('[WhatsApp] Conexão encerrada; reconectando em 5s...');
-          setTimeout(() => void this.connect(), 5_000);
-        } else {
-          console.error('[WhatsApp] Sessão encerrada (logout). Apague .local/whatsapp-session e reinicie.');
-        }
+        this.handleClose((lastDisconnect?.error as Boom | undefined)?.output?.statusCode);
       }
     });
 
     console.log('[WhatsApp] Iniciando conexão...');
   }
 
-  async sendMessage(text: string, image?: Buffer): Promise<void> {
-    if (!this.groupJid || !this.socket) return;
+  private handleClose(statusCode: number | undefined): void {
+    const reason = this.baileys!.DisconnectReason;
 
-    if (!this.connected) {
-      // Espera a primeira conexão por um tempo limitado para não travar a publicação no Telegram.
-      await Promise.race([
-        this.connectionReady,
-        new Promise((resolve) => setTimeout(resolve, CONNECTION_WAIT_MS)),
-      ]);
+    const fatal: Record<number, string> = {
+      [reason.loggedOut]: 'Sessão encerrada (logout). Apague .local/whatsapp-session e reinicie para gerar um novo QR Code.',
+      [reason.connectionReplaced]:
+        'Outra instância está usando a mesma sessão do WhatsApp (ex.: local e Docker ao mesmo tempo). Deixe só uma rodando e reinicie.',
+      [reason.forbidden]: 'O WhatsApp recusou a conexão (403). Verifique a conta e reinicie.',
+      [reason.multideviceMismatch]: 'Sessão incompatível. Apague .local/whatsapp-session e reinicie.',
+    };
+
+    if (statusCode !== undefined && fatal[statusCode]) {
+      this.stopped = true;
+      this.disposeSocket();
+      console.error(`❌ [WhatsApp] ${fatal[statusCode]} Publicação no WhatsApp desativada; o Telegram continua normalmente.`);
+      return;
     }
 
+    // 515 é esperado logo depois de escanear o QR: reconecta na hora.
+    this.scheduleReconnect(statusCode === reason.restartRequired ? 0 : undefined, statusCode);
+  }
+
+  private scheduleReconnect(delayMs?: number, statusCode?: number): void {
+    if (this.stopped) return;
+    const backoff = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** this.reconnectAttempts);
+    const delay = delayMs ?? backoff + Math.floor(Math.random() * 1_000);
+    this.reconnectAttempts++;
+
+    console.log(`[WhatsApp] Conexão encerrada (código ${statusCode ?? 'desconhecido'}); reconectando em ${Math.round(delay / 1000)}s...`);
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = setTimeout(() => {
+      this.connect().catch((error: unknown) => {
+        console.error(`❌ [WhatsApp] Falha ao reconectar: ${describeError(error)}`);
+        this.scheduleReconnect();
+      });
+    }, delay);
+  }
+
+  private disposeSocket(): void {
+    const oldSocket = this.socket;
+    if (!oldSocket) return;
+    this.socket = null;
+    oldSocket.ev.removeAllListeners('connection.update');
+    oldSocket.ev.removeAllListeners('creds.update');
+    oldSocket.end(undefined).catch(() => undefined);
+  }
+
+  async sendMessage(text: string, image?: Buffer): Promise<void> {
+    if (!this.groupJid || this.stopped) return;
+
     if (!this.connected) {
+      const remaining = INITIAL_CONNECTION_WAIT_MS - (Date.now() - this.startedAt);
+      if (remaining > 0) await Promise.race([this.connectionReady, sleep(remaining)]);
+    }
+
+    const socket = this.socket;
+    if (!this.connected || !socket) {
       console.warn('[WhatsApp] Não conectado; mensagem ignorada.');
       return;
     }
 
-    if (image) {
-      await this.socket.sendMessage(this.groupJid, { image, caption: text });
-      console.log('[WhatsApp] Foto com legenda enviada.');
-    } else {
-      await this.socket.sendMessage(this.groupJid, { text });
-      console.log('[WhatsApp] Mensagem de texto enviada.');
-    }
+    const content = image ? { image, caption: text } : { text };
+    await withTimeout(socket.sendMessage(this.groupJid, content), SEND_TIMEOUT_MS, '[WhatsApp] envio');
+    console.log(image ? '[WhatsApp] Foto com legenda enviada.' : '[WhatsApp] Mensagem de texto enviada.');
   }
 }

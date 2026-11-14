@@ -1,6 +1,29 @@
+# dependências e build (refeitos dentro da imagem)
 node_modules
 dist
+
+# segredos
 .env
-npm-debug.log
+.env.*
+!.env.example
+*.session
+auth_info*
+
+# estado local e sessões (vão para o volume, nunca para a imagem)
+.local
+state
+logs
+src/config/tokens.json
+src/config/posted-products.json
+
+# ferramentas e controle de versão
 .git
 .gitignore
+.gitattributes
+.claude
+.vscode
+*.log
+npm-debug.log*
+Dockerfile
+docker-compose.yml
+.dockerignore

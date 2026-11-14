@@ -120,6 +120,28 @@ export function removeLinksFromSourceText(text: string, entities: any[] = []): s
 
 type SourceChat = { id: string; entity: any };
 
+// Erros em que a sessão do Telegram deixou de valer; tentar de novo não resolve.
+const SESSION_INVALID_PATTERN = /AUTH_KEY_DUPLICATED|AUTH_KEY_UNREGISTERED|SESSION_REVOKED|USER_DEACTIVATED/;
+
+export function isSessionInvalidError(error: unknown): boolean {
+  const message = (error as { errorMessage?: string; message?: string } | undefined)?.errorMessage ??
+    (error instanceof Error ? error.message : String(error));
+  return SESSION_INVALID_PATTERN.test(message);
+}
+
+export function explainSessionError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/AUTH_KEY_DUPLICATED/.test(message)) {
+    return (
+      'A sessão do Telegram foi usada por DOIS processos ao mesmo tempo e o Telegram a invalidou. ' +
+      'Garanta uma única instância (Railway: 1 réplica, RAILWAY_DEPLOYMENT_OVERLAP_SECONDS=0, nenhum ' +
+      'ambiente de PR/staging com a mesma variável, nada rodando no seu computador), gere uma nova com ' +
+      '`npm run session` e atualize TELEGRAM_SOURCE_SESSION.'
+    );
+  }
+  return 'A sessão do Telegram não é mais válida. Gere uma nova com `npm run session` e atualize TELEGRAM_SOURCE_SESSION.';
+}
+
 export class TelegramSourceService {
   private readonly client: TelegramClient;
   private sourceChats: SourceChat[] = [];
@@ -128,9 +150,13 @@ export class TelegramSourceService {
   private polling = false;
   private pausedUntil = 0;
   private publishFailures = 0;
+  private pollTimer: NodeJS.Timeout | undefined;
   private lastSuccessfulPollAt = 0;
 
-  constructor(private readonly sink: DealSink) {
+  constructor(
+    private readonly sink: DealSink,
+    private readonly onFatalError?: (error: unknown) => void,
+  ) {
     this.client = new TelegramClient(
       new StringSession(config.telegram.sourceSession),
       config.telegram.apiId,
@@ -138,6 +164,12 @@ export class TelegramSourceService {
       // O bot roda 24h: continua tentando reconectar em vez de desistir após poucas falhas.
       { connectionRetries: Number.POSITIVE_INFINITY, retryDelay: 5_000 },
     );
+  }
+
+  /** Encerra a conexão MTProto. Chamado no desligamento para não deixar a sessão "pendurada". */
+  async stop(): Promise<void> {
+    clearInterval(this.pollTimer);
+    await withTimeout(this.client.destroy(), 5_000, '[TelegramSource] desconexão').catch(() => undefined);
   }
 
   isHealthy(): boolean {
@@ -183,7 +215,7 @@ export class TelegramSourceService {
     this.sourceChats = await this.resolveSourceChats();
     await this.initializePolling();
     this.lastSuccessfulPollAt = Date.now();
-    setInterval(() => {
+    this.pollTimer = setInterval(() => {
       void this.pollSourceChats();
     }, POLL_INTERVAL_MS);
     console.log(`[TelegramSource] Monitorando ${this.sourceChats.length} chat(s) de origem.`);
@@ -253,14 +285,23 @@ export class TelegramSourceService {
           await this.pollChat(chat);
           anyChatRead = true;
         } catch (error: unknown) {
-          if (error instanceof errors.FloodWaitError || error instanceof TelegramTransientError) throw error;
+          if (
+            error instanceof errors.FloodWaitError ||
+            error instanceof TelegramTransientError ||
+            isSessionInvalidError(error)
+          ) {
+            throw error;
+          }
           console.error(`[TelegramSource] Erro ao consultar o chat ${chat.id}: ${describeError(error)}`);
         }
       }
       if (anyChatRead) this.lastSuccessfulPollAt = Date.now();
       this.publishFailures = 0;
     } catch (error: unknown) {
-      if (error instanceof errors.FloodWaitError) {
+      if (isSessionInvalidError(error)) {
+        // Sessão invalidada: seguir tentando só piora. Avisa o processo para encerrar.
+        this.onFatalError?.(error);
+      } else if (error instanceof errors.FloodWaitError) {
         this.pausedUntil = Date.now() + error.seconds * 1000;
         console.warn(`[TelegramSource] FloodWait do Telegram: pausando a leitura por ${error.seconds}s.`);
       } else if (error instanceof TelegramTransientError) {
@@ -301,7 +342,13 @@ export class TelegramSourceService {
         this.markProcessed(chat, message.id, attemptKey);
       } catch (error: unknown) {
         // Falhas do canal sobem sem contar tentativa: a mensagem fica para depois da pausa.
-        if (error instanceof errors.FloodWaitError || error instanceof TelegramTransientError) throw error;
+        if (
+          error instanceof errors.FloodWaitError ||
+          error instanceof TelegramTransientError ||
+          isSessionInvalidError(error)
+        ) {
+          throw error;
+        }
 
         const attempts = (this.failedAttempts.get(attemptKey) || 0) + 1;
         if (error instanceof TelegramPermanentError || attempts >= MAX_ATTEMPTS_PER_MESSAGE) {

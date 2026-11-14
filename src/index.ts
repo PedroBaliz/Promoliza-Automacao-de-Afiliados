@@ -5,7 +5,12 @@ import express from 'express';
 import { config } from './config/env.config';
 import { DatabaseService } from './services/database.service';
 import { TelegramProvider } from './providers/telegram.provider';
-import { DealSink, TelegramSourceService } from './services/telegram-source.service';
+import {
+  DealSink,
+  explainSessionError,
+  isSessionInvalidError,
+  TelegramSourceService,
+} from './services/telegram-source.service';
 import { WhatsAppProvider } from './providers/whatsapp.provider';
 import { parseAffiliateTag } from './utils/affiliate';
 import { buildCaption, TELEGRAM_TEXT_LIMIT } from './utils/caption';
@@ -95,9 +100,32 @@ async function start(): Promise<void> {
     console.log('[WhatsApp] WHATSAPP_GROUP_JID não configurado; publicação no WhatsApp desabilitada.');
   }
 
-  source = new TelegramSourceService(dealSink);
+  source = new TelegramSourceService(dealSink, (error) => {
+    console.error(`❌ [Promoliza] ${explainSessionError(error)}`);
+    void shutdown(1);
+  });
   await source.start();
 }
+
+let shuttingDown = false;
+
+/**
+ * Desconecta o Telegram antes de sair. Sem isso, a conexão antiga pode continuar
+ * "viva" do lado do Telegram enquanto o próximo deploy conecta de outro IP com a mesma
+ * sessão, o que gera AUTH_KEY_DUPLICATED e invalida a sessão.
+ */
+async function shutdown(exitCode: number): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  await source?.stop();
+  process.exit(exitCode);
+}
+
+process.on('SIGTERM', () => {
+  console.log('[Promoliza] SIGTERM recebido; desconectando do Telegram...');
+  void shutdown(0);
+});
+process.on('SIGINT', () => void shutdown(0));
 
 // Rede de segurança: registra sem derrubar o processo e sem imprimir objetos com segredos.
 process.on('unhandledRejection', (reason) => {
@@ -105,7 +133,9 @@ process.on('unhandledRejection', (reason) => {
 });
 
 start().catch((error: unknown) => {
-  console.error(`❌ [Promoliza] Não foi possível iniciar a leitura do Telegram: ${describeError(error)}`);
-  // Encerra para o Docker/Railway reiniciar, em vez de ficar de pé sem monitorar nada.
-  process.exit(1);
+  const detail = isSessionInvalidError(error) ? explainSessionError(error) : describeError(error);
+  console.error(`❌ [Promoliza] Não foi possível iniciar a leitura do Telegram: ${detail}`);
+  // Desconecta e encerra para o Railway/Docker reiniciar, em vez de ficar de pé
+  // (e conectado com a sessão) sem monitorar nada.
+  void shutdown(1);
 });

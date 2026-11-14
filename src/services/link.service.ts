@@ -139,10 +139,17 @@ export async function resolveMercadoLivreLink(rawUrl: string): Promise<ResolvedD
       return null;
     }
 
-    // Vitrine de afiliado (/social/<afiliado>): o próprio caminho credita o afiliado da origem.
+    // Página de afiliado (/social/<afiliado>?ref=...): o caminho credita quem postou e o produto
+    // vem criptografado no ref. Em vez de republicar esse link, extraímos da página o link do
+    // produto e aplicamos a nossa tag nele.
     if (/^\/social\//i.test(current.pathname)) {
-      console.log('[Link] URL ignorada: vitrine de afiliado de terceiros (/social/).');
-      return null;
+      const productUrl = await fetchSocialProductUrl(current);
+      if (!productUrl) {
+        console.log('[Link] URL ignorada: página de afiliado sem produto identificável (/social/).');
+        return null;
+      }
+      console.log(`[Link] Página de afiliado convertida para o produto: ${productUrl}`);
+      current = new URL(productUrl);
     }
 
     const finalUrl = current.toString();
@@ -151,6 +158,43 @@ export async function resolveMercadoLivreLink(rawUrl: string): Promise<ResolvedD
 
   console.log('[Link] URL ignorada: redirecionamentos demais.');
   return null;
+}
+
+const MAX_SOCIAL_PAGE_BYTES = 3 * 1024 * 1024;
+
+/**
+ * Extrai o link do produto principal de uma página /social/<afiliado> do ML.
+ * A página traz o produto da oferta e vários recomendados; o principal é o "gatilho"
+ * das recomendações (trigger_type "product").
+ */
+export function extractSocialProductUrl(html: string): string | null {
+  const text = html.replace(/\\u002F/gi, '/').replace(/\\\//g, '/');
+  const trigger = text.match(/"trigger":\{"trigger_type":"product","item_info":\{"id":"MLB(\d+)"/);
+  if (!trigger) return null;
+
+  const digits = trigger[1];
+  const productLink = new RegExp(
+    `https://(?:www\\.|produto\\.)?mercadolivre\\.com\\.br/[^"'\\s<>?#]*?(?:/p/MLB${digits}|MLB-${digits})(?!\\d)[^"'\\s<>?#]*`,
+    'i',
+  );
+  return text.match(productLink)?.[0] ?? null;
+}
+
+async function fetchSocialProductUrl(socialUrl: URL): Promise<string | null> {
+  try {
+    const response = await axios.get(socialUrl.toString(), {
+      maxRedirects: 0,
+      timeout: REQUEST_TIMEOUT_MS,
+      responseType: 'text',
+      maxContentLength: MAX_SOCIAL_PAGE_BYTES,
+      headers: { 'User-Agent': BROWSER_USER_AGENT, 'Accept-Language': 'pt-BR' },
+      validateStatus: (status) => status >= 200 && status < 300,
+    });
+    return extractSocialProductUrl(String(response.data));
+  } catch (error) {
+    console.log(`[Link] Falha ao ler a página de afiliado: ${describeError(error)}`);
+    return null;
+  }
 }
 
 export async function shortenUrl(url: string): Promise<string> {

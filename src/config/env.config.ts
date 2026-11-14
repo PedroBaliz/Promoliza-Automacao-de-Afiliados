@@ -22,6 +22,8 @@ export const config = {
   },
   whatsapp: {
     groupJid: process.env.WHATSAPP_GROUP_JID || '',
+    // Número da conta (só dígitos, com DDI): conecta por código de pareamento em vez de QR.
+    pairingPhone: (process.env.WHATSAPP_PAIRING_PHONE || '').replace(/\D/g, ''),
   },
   postedProductsFilePath: path.resolve(process.cwd(), '.local', 'posted-products.json'),
 };

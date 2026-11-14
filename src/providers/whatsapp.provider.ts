@@ -83,6 +83,7 @@ export class WhatsAppProvider {
       markOnlineOnConnect: false,
     });
     this.socket = socket;
+    let pairingRequested = false;
 
     socket.ev.on('creds.update', saveCreds);
     socket.ev.on('connection.update', (update) => {
@@ -90,10 +91,29 @@ export class WhatsAppProvider {
       if (socket !== this.socket) return;
       const { connection, lastDisconnect, qr } = update;
 
-      if (qr) {
+      if (qr && config.whatsapp.pairingPhone && !state.creds.registered) {
+        // Código de pareamento: alternativa ao QR, que fica grande demais em painéis de log.
+        if (!pairingRequested) {
+          pairingRequested = true;
+          socket
+            .requestPairingCode(config.whatsapp.pairingPhone)
+            .then((code) => {
+              const formatted = code.match(/.{1,4}/g)?.join('-') ?? code;
+              console.log(`[WhatsApp] Código de pareamento: ${formatted}`);
+              console.log(
+                '[WhatsApp] No celular: WhatsApp → Dispositivos conectados → Conectar dispositivo → ' +
+                  '"Conectar com número de telefone" e digite o código acima.',
+              );
+            })
+            .catch((error: unknown) => {
+              console.error(`❌ [WhatsApp] Não foi possível gerar o código de pareamento: ${describeError(error)}`);
+            });
+        }
+      } else if (qr) {
         qrcode.generate(qr, { small: true });
         console.log('[WhatsApp] Escaneie o QR Code acima com seu WhatsApp para conectar.');
         console.log('[WhatsApp] Abra o WhatsApp → Dispositivos conectados → Conectar dispositivo.');
+        console.log('[WhatsApp] QR grande demais? Defina WHATSAPP_PAIRING_PHONE para conectar por código.');
       }
 
       if (connection === 'open') {

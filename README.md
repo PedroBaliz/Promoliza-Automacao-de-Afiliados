@@ -192,7 +192,12 @@ a comissão não vá para quem postou a oferta.
 ### Variáveis do WhatsApp
 
 - `WHATSAPP_GROUP_JID`: JID do grupo de destino no WhatsApp, no formato
-  `<id>@g.us`. Deixe vazio para desabilitar a publicação no WhatsApp.
+  `<id>@g.us`. Deixe vazio para desabilitar a publicação no WhatsApp. Para
+  descobrir o JID, rode `npm run whatsapp-groups`: ele lista os grupos da conta
+  com o JID de cada um e encerra (não usa o Telegram).
+- `WHATSAPP_PAIRING_PHONE` (opcional): número da conta do WhatsApp com DDI, só
+  dígitos (ex.: `5561999999999`). Quando definido, o login usa um código de
+  pareamento exibido no log em vez do QR Code.
 
 ### Texto original da promoção
 
@@ -259,6 +264,11 @@ Na primeira execução, um QR Code é exibido no terminal (ou nos logs do
 Docker). No celular, abra o WhatsApp → **Dispositivos conectados** →
 **Conectar dispositivo** e escaneie o código. A sessão é salva em
 `.local/whatsapp-session/` e reutilizada nas próximas execuções.
+
+Se o QR Code ficar grande demais para escanear (comum no painel de logs do
+Railway), defina `WHATSAPP_PAIRING_PHONE`. O log passa a mostrar um código como
+`ABCD-EFGH`: no celular, vá em **Dispositivos conectados** → **Conectar
+dispositivo** → **Conectar com número de telefone** e digite o código.
 
 ### Comportamento
 

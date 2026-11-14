@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import axios from 'axios';
 import {
   buildDedupKey,
+  extractSocialProductUrl,
   extractUrls,
   isMercadoLivreHost,
   resolveMercadoLivreLink,
@@ -126,12 +127,30 @@ describe('resolveMercadoLivreLink: afiliado da origem', () => {
     assert.equal(await resolveMercadoLivreLink('https://meli.la/abc'), null);
   });
 
-  test('vitrine de afiliado /social/ é recusada', async () => {
+  test('página /social/ sem produto identificável é recusada', async () => {
     mockGet({
       'https://meli.la/abc': { status: 301, location: 'https://www.mercadolivre.com.br/social/outroafiliado?ref=x' },
       'https://www.mercadolivre.com.br/social/outroafiliado?ref=x': { status: 200 },
     });
     assert.equal(await resolveMercadoLivreLink('https://meli.la/abc'), null);
+  });
+
+  test('página /social/ de outro afiliado vira o link do produto com a nossa tag', async () => {
+    const social = 'https://www.mercadolivre.com.br/social/outroafiliado?matt_word=OUTRO&matt_tool=1&ref=xyz';
+    mock.method(axios, 'get', async (url: string, options: any) => {
+      if (url === 'https://meli.la/abc') return { status: 301, headers: { location: social }, data: undefined };
+      if (url === social && options?.responseType === 'stream') return { status: 200, headers: {}, data: undefined };
+      if (url === social) return { status: 200, headers: {}, data: SOCIAL_PAGE_HTML };
+      throw new Error(`requisição inesperada: ${url}`);
+    });
+
+    const deal = await resolveMercadoLivreLink('https://meli.la/abc');
+    assert.ok(deal);
+    const affiliate = new URL(deal.affiliateUrl);
+    assert.equal(affiliate.pathname, '/body-spray-212-vip-black-250-ml/p/MLB24059210');
+    assert.equal(affiliate.searchParams.get('tag'), 'nossatag');
+    assert.equal(affiliate.searchParams.get('matt_word'), null);
+    assert.equal(deal.dedupKey, 'ml:MLB24059210');
   });
 
   test('403 num domínio de produto do ML continua aceito', async () => {
@@ -324,5 +343,33 @@ describe('shortenUrl', () => {
       throw new Error('timeout');
     });
     assert.equal(await shortenUrl('https://ml.com/x'), 'https://ml.com/x');
+  });
+});
+
+// Trecho reduzido de uma página /social/ real: o produto principal é o "gatilho" das
+// recomendações; os outros itens são recomendados e não podem ser escolhidos.
+const SOCIAL_PAGE_HTML = [
+  '<meta property="og:title" content="Body Spray 212 VIP Black 250 ml - R$ 165">',
+  '<script>{"items":[{"permalink":"https:\u002F\u002Fwww.mercadolivre.com.br\u002Foutro-perfume\u002Fp\u002FMLB27838890?matt_event_ts=1"},',
+  '{"permalink":"https:\/\/www.mercadolivre.com.br\/body-spray-212-vip-black-250-ml\/p\/MLB24059210?matt_event_ts=1&matt_d2id=x"}],',
+  '"trigger":{"trigger_type":"product","item_info":{"id":"MLB24059210"},"product_info":{"id":"MLB24059210"}}}</script>',
+].join('\n');
+
+describe('extractSocialProductUrl', () => {
+  test('escolhe o produto do gatilho, não um recomendado, e remove a query', () => {
+    assert.equal(
+      extractSocialProductUrl(SOCIAL_PAGE_HTML),
+      'https://www.mercadolivre.com.br/body-spray-212-vip-black-250-ml/p/MLB24059210',
+    );
+  });
+
+  test('sem gatilho de produto retorna null', () => {
+    assert.equal(extractSocialProductUrl('<html>sem dados</html>'), null);
+  });
+
+  test('não confunde IDs com prefixo igual (MLB240 ≠ MLB2405)', () => {
+    const html =
+      '"https://www.mercadolivre.com.br/x/p/MLB2405" "trigger":{"trigger_type":"product","item_info":{"id":"MLB240"}}';
+    assert.equal(extractSocialProductUrl(html), null);
   });
 });

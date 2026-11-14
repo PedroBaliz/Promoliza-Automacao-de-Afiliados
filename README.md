@@ -431,9 +431,11 @@ Só são acessados links dos domínios do Mercado Livre ou de encurtadores
 conhecidos (lista `SHORTENER_HOSTS` em `src/services/link.service.ts`).
 Qualquer outro link é ignorado sem ser acessado, e o host é verificado
 novamente a cada redirecionamento. O destino final precisa ser do Mercado
-Livre. Para não manter a comissão de quem postou a oferta, também são
-ignorados links `meli.la` que não redirecionam e vitrines de afiliado
-(`/social/...`).
+Livre. Para não manter a comissão de quem postou a oferta, links `meli.la`
+que não redirecionam são ignorados. Quando o link leva à página de afiliado de
+outra pessoa (`/social/<afiliado>?ref=...`), o bot lê a página, identifica o
+produto principal da oferta e publica o link desse produto com a sua tag; se o
+produto não puder ser identificado, a oferta é ignorada.
 
 Se o Telegram estiver indisponível para publicar (rede, erro 5xx, limite de
 envio, token ou permissão do bot), a leitura é pausada e retomada depois, com

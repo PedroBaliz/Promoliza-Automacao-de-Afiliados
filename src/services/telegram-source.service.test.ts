@@ -17,7 +17,7 @@ before(async () => {
 
 after(() => {
   process.chdir(originalCwd);
-  fs.rmSync(tempDir, { recursive: true, force: true });
+  fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 function urlEntity(text: string, fragment: string) {

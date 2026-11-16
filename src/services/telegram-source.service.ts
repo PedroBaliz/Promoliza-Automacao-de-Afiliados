@@ -5,20 +5,10 @@ import { config } from '../config/env.config';
 import { TelegramPermanentError, TelegramTransientError } from '../providers/telegram.provider';
 import { describeError } from '../utils/errors';
 import { withTimeout } from '../utils/timeout';
-import { extractUrls, resolveMercadoLivreLink, shortenUrl } from './link.service';
+import { extractUrls } from './link.service';
+import { DealSink, publishDeals } from './deal-pipeline';
 
-export interface Deal {
-  dedupKey: string;
-  affiliateUrl: string;
-  sourceCaption: string;
-  image?: Buffer;
-}
-
-/** Destino das ofertas encontradas: quem decide se já foi publicada e quem publica. */
-export interface DealSink {
-  isAlreadyPosted(dedupKey: string): boolean;
-  publish(deal: Deal): Promise<void>;
-}
+export type { Deal, DealSink } from './deal-pipeline';
 
 const POLL_INTERVAL_MS = 10_000;
 const TELEGRAM_CALL_TIMEOUT_MS = 60_000;
@@ -96,6 +86,14 @@ export function collectMessageUrls(message: any): string[] {
   }
 
   return [...new Set(urls)];
+}
+
+/** Links sem http(s) (ex.: "meli.la/abc"), devolvidos com https:// para poderem ser resolvidos. */
+export function extractBareLinks(text: string): string[] {
+  return (text.match(BARE_LINK_PATTERN) || [])
+    .map((link) => link.replace(/[.,!?;:'*)\]]+$/, ''))
+    .filter(Boolean)
+    .map((link) => `https://${link}`);
 }
 
 export function removeLinksFromSourceText(text: string, entities: any[] = []): string {
@@ -401,35 +399,15 @@ export class TelegramSourceService {
       return;
     }
 
-    const sourceCaption = removeLinksFromSourceText(text, message.entities);
-    const seenKeys = new Set<string>();
-    let image: Buffer | undefined;
-    let imageLoaded = false;
-
-    for (const rawUrl of rawUrls) {
-      const deal = await resolveMercadoLivreLink(rawUrl);
-      if (!deal) {
-        console.log(`[TelegramSource] URL ignorada: não é um link válido do Mercado Livre: ${rawUrl}`);
-        continue;
-      }
-
-      // Checa a duplicidade antes de encurtar e baixar a mídia, para não gastar requisições.
-      if (seenKeys.has(deal.dedupKey) || this.sink.isAlreadyPosted(deal.dedupKey)) {
-        console.log(`[Promoliza] Oferta ignorada: ${deal.dedupKey} já enviada nos últimos 30 dias.`);
-        continue;
-      }
-      seenKeys.add(deal.dedupKey);
-
-      const shortenedUrl = await shortenUrl(deal.affiliateUrl);
-      if (!imageLoaded) {
-        image = await this.downloadImage(message);
-        imageLoaded = true;
-      }
-      console.log(
-        `[TelegramSource] Link do Mercado Livre encontrado; mídia=${image ? `${image.length} bytes` : 'não encontrada'}.`,
-      );
-      await this.sink.publish({ dedupKey: deal.dedupKey, affiliateUrl: shortenedUrl, sourceCaption, image });
-    }
+    await publishDeals(
+      {
+        rawUrls,
+        sourceCaption: removeLinksFromSourceText(text, message.entities),
+        loadImage: () => this.downloadImage(message),
+        logTag: '[TelegramSource]',
+      },
+      this.sink,
+    );
   }
 
   private async downloadImage(message: any): Promise<Buffer | undefined> {

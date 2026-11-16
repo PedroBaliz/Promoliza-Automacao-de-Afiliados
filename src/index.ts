@@ -12,6 +12,7 @@ import {
   TelegramSourceService,
 } from './services/telegram-source.service';
 import { WhatsAppProvider } from './providers/whatsapp.provider';
+import { WhatsAppSourceService } from './services/whatsapp-source.service';
 import { parseAffiliateTag } from './utils/affiliate';
 import { buildCaption, TELEGRAM_TEXT_LIMIT } from './utils/caption';
 import { describeError } from './utils/errors';
@@ -52,7 +53,7 @@ const dealSink: DealSink = {
 
     // WhatsApp é opcional: vai para uma fila própria, então nem falha nem lentidão dele
     // atrasam ou bloqueiam o Telegram.
-    if (whatsappProvider.enabled) {
+    if (whatsappProvider.publishEnabled) {
       enqueueWhatsApp(buildCaption(sourceCaption, affiliateUrl, TELEGRAM_TEXT_LIMIT), image);
     }
   },
@@ -91,12 +92,21 @@ function validateAffiliateConfig(): void {
 async function start(): Promise<void> {
   validateAffiliateConfig();
 
+  if (config.whatsapp.sourceJids.length > 0) {
+    if (config.whatsapp.sourceJids.includes(config.whatsapp.groupJid)) {
+      throw new Error('WHATSAPP_SOURCE_JIDS não pode conter o grupo de destino (WHATSAPP_GROUP_JID).');
+    }
+    new WhatsAppSourceService(whatsappProvider, dealSink).start();
+    console.log(`[WhatsAppSource] Monitorando ${config.whatsapp.sourceJids.length} grupo(s) de origem.`);
+  }
+
   if (whatsappProvider.enabled) {
     // Não espera o WhatsApp: ele conecta em paralelo e uma falha dele não impede o Telegram.
     whatsappProvider.start().catch((error: unknown) => {
       console.error(`❌ [WhatsApp] Falha ao iniciar; seguindo só com o Telegram: ${describeError(error)}`);
     });
-  } else {
+  }
+  if (!whatsappProvider.publishEnabled) {
     console.log('[WhatsApp] WHATSAPP_GROUP_JID não configurado; publicação no WhatsApp desabilitada.');
   }
 

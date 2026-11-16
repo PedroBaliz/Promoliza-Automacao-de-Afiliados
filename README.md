@@ -195,6 +195,9 @@ a comissão não vá para quem postou a oferta.
   `<id>@g.us`. Deixe vazio para desabilitar a publicação no WhatsApp. Para
   descobrir o JID, rode `npm run whatsapp-groups`: ele lista os grupos da conta
   com o JID de cada um e encerra (não usa o Telegram).
+- `WHATSAPP_SOURCE_JIDS` (opcional): grupos do WhatsApp lidos como origem de
+  ofertas, separados por vírgula. Veja
+  [Grupos do WhatsApp como origem](#grupos-do-whatsapp-como-origem-opcional).
 - `WHATSAPP_PAIRING_PHONE` (opcional): número da conta do WhatsApp com DDI, só
   dígitos (ex.: `5561999999999`). Quando definido, o login usa um código de
   pareamento exibido no log em vez do QR Code.
@@ -289,6 +292,29 @@ dispositivo** → **Conectar com número de telefone** e digite o código.
   uma instância rodando e reinicie.
 - Se o WhatsApp não estiver conectado no momento do envio, a mensagem é
   ignorada no WhatsApp e registrada no log.
+
+## Grupos do WhatsApp como origem (opcional)
+
+Além dos chats do Telegram, o bot pode ler ofertas de grupos do WhatsApp:
+
+```env
+WHATSAPP_SOURCE_JIDS=<id1>@g.us,<id2>@g.us
+```
+
+- A conta do WhatsApp conectada precisa ser **membro** desses grupos. Os JIDs
+  aparecem em `npm run whatsapp-groups`.
+- Cada mensagem nova com link do Mercado Livre passa pelo mesmo pipeline do
+  Telegram: texto inteiro (sem os links originais), foto (se houver), link
+  convertido para afiliado e deduplicação de 30 dias. A oferta é publicada no
+  Telegram e, se `WHATSAPP_GROUP_JID` estiver definido, no grupo do WhatsApp.
+- Mensagens enviadas pela própria conta, histórico antigo e mensagens com mais
+  de 15 minutos (ex.: entregues após uma queda longa) são ignorados.
+- O grupo de destino não pode estar na lista de origem (o bot recusa iniciar).
+- Se a publicação no Telegram estiver fora do ar, a oferta é tentada de novo com
+  espera crescente (até 8 vezes). A fila fica em memória: ofertas pendentes se
+  perdem se o processo reiniciar.
+- Use um número dedicado: contas que leem e republicam muito de forma
+  automática correm risco de banimento pelo WhatsApp.
 
 ## Execução local
 

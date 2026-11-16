@@ -17,7 +17,11 @@ before(async () => {
 
 after(() => {
   process.chdir(originalCwd);
-  fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  try {
+    fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch {
+    // Windows às vezes segura a pasta temporária por um instante; não é falha do teste.
+  }
 });
 
 function urlEntity(text: string, fragment: string) {

@@ -61,11 +61,36 @@ export function collectWhatsAppUrls(content: any): string[] {
   return [...new Set(urls)];
 }
 
-function hasDownloadableImage(content: any): boolean {
-  const image = unwrapContent(content)?.imageMessage;
-  if (!image) return false;
-  const size = Number(image.fileLength?.toString?.() ?? image.fileLength ?? 0);
-  return !Number.isFinite(size) || size <= MAX_IMAGE_BYTES;
+/** Tira os asteriscos do negrito do WhatsApp (*R$49*), que no Telegram apareceriam literais. */
+export function stripWhatsAppAsterisks(text: string): string {
+  return text.replace(/\*/g, '').replace(/[ \t]{2,}/g, ' ').trim();
+}
+
+// Miniatura menor que isso fica borrada demais para valer como foto da oferta.
+const MIN_INLINE_THUMBNAIL_BYTES = 2 * 1024;
+
+export type ImageSource = 'photo' | 'link-preview' | 'inline-thumbnail' | 'none';
+
+/**
+ * De onde tirar a foto da oferta. Grupos de ofertas costumam mandar só texto com link:
+ * a imagem que aparece no WhatsApp é a prévia do link (a foto do produto no Mercado Livre).
+ */
+export function pickImageSource(content: any): ImageSource {
+  const c = unwrapContent(content);
+  const image = c?.imageMessage;
+  if (image) {
+    const size = Number(image.fileLength?.toString?.() ?? image.fileLength ?? 0);
+    return !Number.isFinite(size) || size <= MAX_IMAGE_BYTES ? 'photo' : 'none';
+  }
+  const ext = c?.extendedTextMessage;
+  if (ext?.thumbnailDirectPath && ext?.mediaKey?.length) return 'link-preview';
+  if ((ext?.jpegThumbnail?.length ?? 0) >= MIN_INLINE_THUMBNAIL_BYTES) return 'inline-thumbnail';
+  return 'none';
+}
+
+function inlineThumbnail(content: any): Buffer | undefined {
+  const thumb = unwrapContent(content)?.extendedTextMessage?.jpegThumbnail;
+  return thumb?.length >= MIN_INLINE_THUMBNAIL_BYTES ? Buffer.from(thumb) : undefined;
 }
 
 function messageTimeMs(message: WAMessage): number | undefined {
@@ -132,6 +157,30 @@ export class WhatsAppSourceService {
     }
   }
 
+  private async loadImage(message: WAMessage): Promise<Buffer | undefined> {
+    const source = pickImageSource(message.message);
+    if (source === 'none') {
+      // Só os nomes dos campos (sem conteúdo), para entender por que a mensagem veio sem foto.
+      const c = unwrapContent(message.message) ?? {};
+      const ext = c.extendedTextMessage ? ` extendedTextMessage=[${Object.keys(c.extendedTextMessage).join(',')}]` : '';
+      console.log(`[WhatsAppSource] Sem foto ou prévia: campos=[${Object.keys(c).join(',')}]${ext}`);
+      return undefined;
+    }
+
+    if (source === 'photo' || source === 'link-preview') {
+      // Para a prévia, o Baileys baixa a versão em alta qualidade (thumbnailDirectPath).
+      const image = await this.provider.downloadImage(message);
+      if (image && image.length <= MAX_IMAGE_BYTES) {
+        if (source === 'link-preview') console.log('[WhatsAppSource] Foto tirada da prévia do link.');
+        return image;
+      }
+    }
+
+    const thumb = inlineThumbnail(message.message);
+    if (thumb) console.log('[WhatsAppSource] Foto tirada da miniatura da prévia do link (baixa resolução).');
+    return thumb;
+  }
+
   private async handleMessage(message: WAMessage): Promise<void> {
     const sentAt = messageTimeMs(message);
     if (sentAt && Date.now() - sentAt > MAX_MESSAGE_AGE_MS) return;
@@ -153,9 +202,8 @@ export class WhatsAppSourceService {
       await publishDeals(
         {
           rawUrls,
-          sourceCaption: removeLinksFromSourceText(text),
-          loadImage: async () =>
-            hasDownloadableImage(message.message) ? this.provider.downloadImage(message) : undefined,
+          sourceCaption: stripWhatsAppAsterisks(removeLinksFromSourceText(text)),
+          loadImage: () => this.loadImage(message),
           logTag: '[WhatsAppSource]',
         },
         this.sink,

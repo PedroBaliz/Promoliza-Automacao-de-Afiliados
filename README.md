@@ -1,536 +1,472 @@
 # Promoliza — Automação de Afiliados no Telegram e WhatsApp
 
-Bot em TypeScript/Node.js que monitora canais e grupos do Telegram, identifica
-links do Mercado Livre, converte esses links para links de afiliado e
-republica as promoções em um grupo de destino do Telegram e, opcionalmente,
-em um grupo do WhatsApp.
+Bot em TypeScript/Node.js que lê ofertas de canais e grupos do **Telegram** e
+de grupos do **WhatsApp**, identifica links do Mercado Livre, converte esses
+links para o **seu link de afiliado** e republica a oferta (texto, foto e link)
+em um grupo de destino do Telegram e, opcionalmente, em um grupo do WhatsApp.
 
 > **Automação de marketing de afiliados e ofertas do Mercado Livre no Telegram e no WhatsApp.**
 
-O projeto combina uma conta de usuário do Telegram para monitoramento com um
-bot do Telegram para publicação. A publicação no WhatsApp usa uma conta
-conectada via [Baileys](https://github.com/WhiskeySockets/Baileys). É adequado
-para automação de ofertas, cupons, promoções e distribuição de links de
-afiliados.
+Peças usadas:
+
+- **Conta de usuário do Telegram** ([gramjs](https://github.com/gram-js/gramjs)):
+  lê os canais e grupos de origem.
+- **Bot do Telegram** (Bot API): publica no grupo de destino.
+- **Conta do WhatsApp** ([Baileys](https://github.com/WhiskeySockets/Baileys)),
+  opcional: lê grupos de origem e/ou publica em um grupo de destino.
+
+## Sumário
+
+- [Funcionalidades](#funcionalidades)
+- [Como funciona](#como-funciona)
+- [Estrutura do projeto](#estrutura-do-projeto)
+- [Início rápido](#início-rápido)
+- [Pré-requisitos](#pré-requisitos)
+- [Configuração](#configuração)
+- [Sessão do Telegram](#sessão-do-telegram)
+- [WhatsApp](#whatsapp)
+- [Comandos](#comandos)
+- [Health check](#health-check)
+- [Docker](#docker)
+- [Deploy no Railway](#deploy-no-railway)
+- [Regras do processamento](#regras-do-processamento)
+- [Segurança](#segurança)
 
 ## Funcionalidades
 
-- Monitoramento contínuo de um ou mais grupos/canais do Telegram.
-- Leitura de novas mensagens recebidas após a conexão do serviço.
-- Extração de URLs do texto, de links embutidos, de botões e de links sem
-  `http` (ex.: `meli.la/abc`).
-- Acesso somente a links do Mercado Livre ou de encurtadores conhecidos; o
-  host é revalidado a cada redirecionamento.
-- Conversão do link para o formato de afiliado configurado, sempre removendo
-  parâmetros de afiliado vindos da origem.
-- Remoção dos links (com e sem `http`) e de rótulos órfãos, como `Link:`, do
-  texto republicado.
-- Encurtamento do link afiliado publicado.
-- Republicação com a foto original; legendas cortadas para caber no limite do
-  Telegram, com o link sempre no fim.
-- Publicação opcional em um grupo do WhatsApp, sem nunca bloquear o Telegram.
-- Prevenção de republicação do mesmo produto (ID MLB) por 30 dias.
-- Persistência local do histórico de produtos publicados.
-- Endpoint `/health` para monitorar se o Telegram está sendo lido.
-- Execução local, via Docker ou em um servidor 24 horas.
+- **Origens:** canais e grupos do Telegram (`TELEGRAM_SOURCE_CHATS`) e grupos
+  do WhatsApp (`WHATSAPP_SOURCE_JIDS`, opcional).
+- **Destinos:** grupo do Telegram (obrigatório) e grupo do WhatsApp
+  (`WHATSAPP_GROUP_JID`, opcional).
+- Extração de links do texto, de links embutidos, de botões, de links sem
+  `http` (ex.: `meli.la/abc`) e da prévia de link do WhatsApp.
+- Acesso somente a links do Mercado Livre ou de encurtadores conhecidos, com o
+  host revalidado a cada redirecionamento (proteção contra SSRF).
+- Conversão para o seu link de afiliado, sempre removendo a afiliação de quem
+  postou. Páginas `/social/<afiliado>` são convertidas no link do produto.
+- Texto original republicado **inteiro**, sem os links de origem e sem rótulos
+  órfãos (`🔗 Link:`). O link afiliado encurtado (is.gd) vai no fim.
+- Foto da oferta: a foto original da mensagem. Nas mensagens do WhatsApp sem
+  foto anexada, é usada a prévia do link (a foto do produto no Mercado Livre).
+- Um mesmo produto não é republicado por 30 dias, venha de qualquer origem.
+- O WhatsApp nunca bloqueia nem atrasa o Telegram.
+- Endpoint `/health` para o Docker e o Railway.
 
-> O serviço não lê mensagens antigas anteriores ao início do monitoramento.
-> A conta usada na sessão precisa conseguir visualizar os grupos ou canais de
-> origem.
->
-> O bot processa as promoções conforme elas chegam. Ele não cria um timer
-> próprio para limitar a quantidade de publicações; caso os grupos de origem já
-> controlem a frequência, esse comportamento é preservado.
+> O bot só processa mensagens que chegam **depois** de iniciar; não lê o
+> histórico. Ele também não limita a frequência de publicação: as ofertas
+> saem no ritmo em que chegam nas origens.
 
-## Fluxo da aplicação
+## Como funciona
 
 ```text
-Grupo/canal de origem
-        |
-        v
-TelegramSourceService (conta de usuário)
-        |
-        v
-Extração e resolução do link (só hosts permitidos)
-        |
-        v
-Conversão para link de afiliado
-        |
-        v
-DatabaseService verifica duplicidade (ID MLB)
-        |
-        v
-Encurtamento do link (is.gd)
-        |
-        v
-TelegramProvider publica com o bot ──> Grupo de destino (Telegram)
-        |
-        v
-WhatsAppProvider (opcional) ──> Grupo de destino (WhatsApp)
+ Telegram (canais/grupos)            WhatsApp (grupos, opcional)
+          |                                   |
+ TelegramSourceService               WhatsAppSourceService
+ (consulta a cada 10 s)              (evento de mensagem nova)
+          |                                   |
+          +-------------> deal-pipeline <-----+
+                               |
+             1. resolve o link (só hosts permitidos)
+             2. descarta o que não é Mercado Livre
+             3. descarta repetidos (30 dias)
+             4. aplica a tag de afiliado e encurta (is.gd)
+             5. pega a foto da mensagem
+                               |
+                               v
+             TelegramProvider ──> grupo de destino (Telegram)
+                               |
+                               v
+             WhatsAppProvider (opcional, fila própria) ──> grupo de destino (WhatsApp)
 ```
 
-O monitoramento usa uma sessão de usuário do Telegram porque bots não
-conseguem acessar todos os grupos e canais da mesma forma que uma conta
-normal. A publicação é feita separadamente pelo token do bot.
+- O Telegram é o **canal principal**. Se a publicação nele falhar por motivo
+  temporário, a oferta é tentada de novo e nada é descartado.
+- O produto é marcado como publicado logo depois do envio ao Telegram. Assim,
+  uma queda durante o envio ao WhatsApp não gera repetição no Telegram.
+- O WhatsApp recebe a oferta por uma fila separada (até 50 pendentes). Uma
+  falha nele só aparece no log.
 
-O Telegram é o canal principal: se o envio ao Telegram falhar, a mensagem é
-tentada novamente no próximo ciclo. Uma falha no WhatsApp é apenas registrada
-no log e não causa reenvio nem duplicação no Telegram.
+A leitura do Telegram usa uma **conta de usuário**, porque um bot não consegue
+ler canais e grupos de terceiros. A publicação é feita pelo **bot**.
 
-## Arquitetura de pastas
+## Estrutura do projeto
 
 ```text
-.
-├── dist/                           # JavaScript compilado; gerado pelo build
-├── node_modules/                   # Dependências instaladas; gerado pelo npm
-├── src/
-│   ├── config/
-│   │   └── env.config.ts            # Leitura e normalização das variáveis
-│   ├── providers/
-│   │   ├── telegram.provider.ts     # Publicação via Telegram Bot API
-│   │   └── whatsapp.provider.ts     # Publicação opcional via Baileys
-│   ├── services/
-│   │   ├── database.service.ts      # Controle de duplicidade e persistência
-│   │   ├── link.service.ts          # Extração, resolução e encurtamento de URLs
-│   │   └── telegram-source.service.ts # Monitoramento via conta de usuário
-│   ├── utils/
-│   │   ├── affiliate.ts             # Construção do link afiliado
-│   │   ├── caption.ts               # Montagem e corte da legenda
-│   │   ├── errors.ts                # Mensagens de erro sem segredos
-│   │   └── timeout.ts               # Tempo limite para chamadas externas
-│   └── index.ts                     # Inicialização do HTTP e do monitoramento
-├── .dockerignore                    # Arquivos ignorados no contexto do Docker
-├── .env                             # Variáveis locais e segredos; não versionar
-├── .env.example                     # Modelo das variáveis de ambiente
-├── .gitignore                       # Arquivos ignorados pelo Git
-├── Dockerfile                       # Imagem de produção (multi-stage)
-├── docker-compose.yml               # Execução do serviço com Docker
-├── package-lock.json                # Versões exatas das dependências
-├── package.json                     # Scripts e dependências
-└── tsconfig.json                    # Configuração do TypeScript
+src/
+├── config/
+│   └── env.config.ts               # Leitura e normalização das variáveis
+├── providers/
+│   ├── telegram.provider.ts        # Publicação via Telegram Bot API
+│   └── whatsapp.provider.ts        # Conexão Baileys: publica e escuta grupos de origem
+├── services/
+│   ├── deal-pipeline.ts            # Etapa comum: link → afiliado → dedup → publicar
+│   ├── telegram-source.service.ts  # Leitura das origens do Telegram
+│   ├── whatsapp-source.service.ts  # Leitura das origens do WhatsApp
+│   ├── link.service.ts             # Extração, resolução e encurtamento de URLs
+│   └── database.service.ts         # Histórico de produtos publicados (dedup)
+├── scripts/
+│   ├── generate-session.ts         # npm run session: gera a sessão do Telegram
+│   └── whatsapp-groups.ts          # npm run whatsapp-groups: lista os JIDs dos grupos
+├── utils/
+│   ├── affiliate.ts                # Montagem do link afiliado
+│   ├── caption.ts                  # Montagem e corte da legenda
+│   ├── errors.ts                   # Mensagens de erro sem segredos
+│   └── timeout.ts                  # Tempo limite para chamadas externas
+└── index.ts                        # Inicialização: HTTP, origens e destinos
 ```
 
-`dist/` e `node_modules/` aparecem depois da instalação e da compilação, mas
-são diretórios gerados e não fazem parte do código-fonte principal. O
-diretório `.local/` é criado em tempo de execução e guarda:
-
-- `.local/posted-products.json`: histórico de produtos já publicados.
-- `.local/whatsapp-session/`: sessão do WhatsApp (apenas se habilitado).
+- Os testes ficam ao lado de cada módulo (`*.test.ts`).
+- Na raiz: `Dockerfile`, `docker-compose.yml`, `.env.example` e a pasta
+  `.claude/`, com os agentes do Claude Code usados no projeto.
+- `.local/` é criada em tempo de execução e não é versionada. Ela guarda:
+  - `.local/posted-products.json`: histórico de produtos publicados;
+  - `.local/whatsapp-session/`: sessão do WhatsApp.
 
 ## Início rápido
 
 ```powershell
 npm ci
-copy .env.example .env   # Windows; no Linux/macOS: cp .env.example .env
+copy .env.example .env   # Linux/macOS: cp .env.example .env
+npm run session          # gera TELEGRAM_SOURCE_SESSION (cole no .env)
 npm run dev
 ```
 
-Antes de iniciar, preencha o `.env` e gere a sessão do Telegram conforme as
-instruções abaixo.
+> ⚠️ **Não rode o bot no seu computador enquanto a produção estiver no ar
+> com a mesma sessão do Telegram.** Veja
+> [Uma sessão, uma instância](#uma-sessão-uma-instância).
 
 ## Pré-requisitos
 
-- Node.js 22.12 ou superior para execução local.
-- Docker Desktop e Docker Compose para execução em container.
-- Uma conta do Telegram inscrita nos grupos/canais de origem.
-- Um bot do Telegram criado pelo BotFather.
-- API ID e API Hash obtidos em [my.telegram.org](https://my.telegram.org).
-- Um grupo de destino onde o bot possa enviar mensagens.
-- Opcional: uma conta do WhatsApp participante do grupo de destino.
+- Node.js **22.12 ou superior**. O Baileys é ESM e é carregado via `require`.
+- Uma conta do Telegram inscrita nos canais e grupos de origem.
+- `API ID` e `API Hash` obtidos em [my.telegram.org](https://my.telegram.org).
+- Um bot criado no BotFather, com permissão para enviar mensagens no grupo de
+  destino.
+- Opcional: uma conta do WhatsApp que participe dos grupos de origem e/ou de
+  destino. De preferência, um número dedicado.
+- Opcional: Docker, para rodar em container.
 
-## Configuração do ambiente
+## Configuração
 
-Copie o `.env.example` para `.env` na raiz do projeto e preencha os valores:
+Copie o `.env.example` para `.env` e preencha:
 
 ```env
 PORT=3000
-NODE_ENV=production
+NODE_ENV=development
 
 ML_AFFILIATE_TAG=matt:sua_matt_word:sua_matt_tool
 
-TELEGRAM_BOT_TOKEN=token_do_seu_bot
+# Telegram — bot que publica
+TELEGRAM_BOT_TOKEN=123456789:token_do_bot
 TELEGRAM_CHAT_ID=-1001234567890
 
+# Telegram — conta que lê as origens
 TELEGRAM_API_ID=12345678
 TELEGRAM_API_HASH=seu_api_hash
 TELEGRAM_SOURCE_PHONE=+5511999999999
-TELEGRAM_SOURCE_CHATS=@canal1,@grupo2
+TELEGRAM_SOURCE_CHATS=@canal1,-1001234567890
 TELEGRAM_SOURCE_SESSION=
 
+# WhatsApp (opcional)
 WHATSAPP_GROUP_JID=
+WHATSAPP_SOURCE_JIDS=
+WHATSAPP_PAIRING_PHONE=
 ```
 
-### Variáveis gerais
+### Geral
 
-- `PORT`: porta do servidor HTTP. Padrão: `3000`.
-- `NODE_ENV`: ambiente de execução. O Docker já define `production`.
+| Variável | Descrição |
+|---|---|
+| `PORT` | Porta do servidor HTTP. Padrão `3000`. No Railway é definida automaticamente. |
+| `NODE_ENV` | Ambiente. O Docker já define `production`. |
 
 ### Afiliado do Mercado Livre
 
 `ML_AFFILIATE_TAG` aceita dois formatos:
 
 - `matt:<matt_word>:<matt_tool>`: adiciona `matt_word` e `matt_tool` ao link.
-- Tag simples (ex.: `minha_tag`): adiciona o parâmetro `tag` ao link.
+- Tag simples (ex.: `minha_tag`): adiciona o parâmetro `tag`.
 
-Os parâmetros de afiliado que vierem no link da origem (`matt_word`,
-`matt_tool` e `tag`) são sempre removidos antes de aplicar a sua tag, para que
-a comissão não vá para quem postou a oferta.
+Os parâmetros de afiliado que vêm no link da origem (`matt_word`, `matt_tool`
+e `tag`) são sempre removidos antes de aplicar a sua tag.
 
-- Se o formato `matt:` estiver incompleto, a aplicação não inicia.
-- Se a variável estiver vazia, a aplicação exibe um aviso e publica os links
-  **sem afiliação**.
+- Se o formato `matt:` estiver incompleto, o bot não inicia.
+- Se a variável estiver vazia, o bot mostra um aviso e publica os links **sem
+  afiliação**.
 
-### Variáveis do Telegram
+### Telegram
 
-- `TELEGRAM_BOT_TOKEN`: token do bot que publica no grupo de destino.
-- `TELEGRAM_CHAT_ID`: ID do grupo onde as promoções serão publicadas.
-- `TELEGRAM_API_ID` e `TELEGRAM_API_HASH`: credenciais da API do Telegram.
-- `TELEGRAM_SOURCE_PHONE`: telefone da conta usada para monitorar as origens.
-- `TELEGRAM_SOURCE_CHATS`: grupos ou canais que serão monitorados.
-- `TELEGRAM_SOURCE_SESSION`: sessão serializada da conta de monitoramento.
+| Variável | Descrição |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Token do bot que publica. |
+| `TELEGRAM_CHAT_ID` | ID do grupo ou canal de destino. |
+| `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` | Credenciais de [my.telegram.org](https://my.telegram.org). |
+| `TELEGRAM_SOURCE_PHONE` | Telefone da conta que lê as origens, com DDI. |
+| `TELEGRAM_SOURCE_CHATS` | Origens separadas por vírgula: `@username` ou ID numérico. **Não** use o nome exibido do grupo. |
+| `TELEGRAM_SOURCE_SESSION` | Sessão da conta de leitura (veja [Sessão do Telegram](#sessão-do-telegram)). |
 
-### Variáveis do WhatsApp
+### WhatsApp (opcional)
 
-- `WHATSAPP_GROUP_JID`: JID do grupo de destino no WhatsApp, no formato
-  `<id>@g.us`. Deixe vazio para desabilitar a publicação no WhatsApp. Para
-  descobrir o JID, rode `npm run whatsapp-groups`: ele lista os grupos da conta
-  com o JID de cada um e encerra (não usa o Telegram).
-- `WHATSAPP_SOURCE_JIDS` (opcional): grupos do WhatsApp lidos como origem de
-  ofertas, separados por vírgula. Veja
-  [Grupos do WhatsApp como origem](#grupos-do-whatsapp-como-origem-opcional).
-- `WHATSAPP_PAIRING_PHONE` (opcional): número da conta do WhatsApp com DDI, só
-  dígitos (ex.: `5561999999999`). Quando definido, o login usa um código de
-  pareamento exibido no log em vez do QR Code.
+| Variável | Descrição |
+|---|---|
+| `WHATSAPP_GROUP_JID` | Grupo de **destino** (`<id>@g.us`). Vazio = não publica no WhatsApp. |
+| `WHATSAPP_SOURCE_JIDS` | Grupos de **origem** (`<id>@g.us`), separados por vírgula. Vazio = não lê o WhatsApp. |
+| `WHATSAPP_PAIRING_PHONE` | Número da conta com DDI, só dígitos (ex.: `5561999999999`). Se definido, o login usa um código de pareamento em vez do QR Code. |
 
-### Texto original da promoção
+Os JIDs aparecem com `npm run whatsapp-groups`. O WhatsApp só conecta se
+`WHATSAPP_GROUP_JID` ou `WHATSAPP_SOURCE_JIDS` estiver preenchido.
 
-O bot publica a mensagem original do grupo de origem, removendo os links
-encontrados nela (inclusive links sem `http`, como `meli.la/x` e `t.me/...`) e
-linhas que ficariam só com um rótulo, como `🔗 Link:`. Em seguida acrescenta o
-link afiliado processado no fim.
+## Sessão do Telegram
 
-Se a mensagem tiver foto, ela é reenviada com a legenda cortada para caber no
-limite do Telegram (1024 caracteres com foto, 4096 só texto). O link afiliado
-nunca é cortado. Se o Telegram recusar a foto, a oferta é enviada só com o
-texto.
-
-`TELEGRAM_SOURCE_CHATS` deve usar usernames públicos ou IDs numéricos, sempre
-separados por vírgula. Não use o nome exibido do grupo, especialmente se ele
-tiver espaços ou caracteres especiais:
-
-```env
-TELEGRAM_SOURCE_CHATS=@grupovizinhos,@promoml,-1001234567890
-```
-
-O grupo de origem é o local que será rastreado. O grupo configurado em
-`TELEGRAM_CHAT_ID` é o local onde o bot publicará as ofertas.
-
-## Gerando a sessão do Telegram
-
-A sessão deve ser gerada no seu computador, em um terminal interativo. Deixe
-`TELEGRAM_SOURCE_SESSION` vazio e inicie a aplicação:
+Gere a sessão no seu computador, num terminal interativo:
 
 ```powershell
-npm install
-npm run dev
+npm run session
 ```
 
-Informe no terminal:
+1. Informe o código recebido no Telegram.
+2. Informe a senha de verificação em duas etapas, se houver.
+3. Copie o valor exibido para `TELEGRAM_SOURCE_SESSION`, no `.env` e/ou nas
+   variáveis do Railway.
 
-1. O código recebido no Telegram.
-2. A senha de autenticação em duas etapas, caso esteja configurada.
+O comando sempre cria uma sessão nova e só faz isso: não lê grupos nem
+publica nada. Se `TELEGRAM_SOURCE_SESSION` estiver vazia e não houver terminal
+interativo (ex.: no Railway), o bot encerra explicando o que fazer.
 
-O programa exibirá uma sessão serializada. Copie o valor completo para
-`TELEGRAM_SOURCE_SESSION` no arquivo `.env` e reinicie a aplicação.
+### Uma sessão, uma instância
 
-Depois disso, a aplicação não deverá pedir o código novamente. Nunca publique
-o conteúdo da sessão, o token do bot ou o API Hash em repositórios ou chats.
+O Telegram **invalida** uma sessão usada por dois processos ao mesmo tempo
+(erro `AUTH_KEY_DUPLICATED`). A partir daí, o bot para de ler as origens até
+você gerar uma sessão nova. Para evitar isso:
 
-Sem `TELEGRAM_SOURCE_SESSION` e sem terminal interativo (por exemplo, no
-Railway), a aplicação encerra com uma mensagem explicando que a sessão precisa
-ser gerada com `npm run dev`.
+- Rode **uma única instância** com cada sessão.
+- No Railway, use 1 réplica e `RAILWAY_DEPLOYMENT_OVERLAP_SECONDS=0`. Não crie
+  ambientes de PR ou staging com a mesma sessão.
+- Não rode `npm run dev` nem o container local (`docker compose`) enquanto a
+  produção estiver no ar. O container local usa `restart: unless-stopped`: ao
+  abrir o Docker Desktop, ele pode subir sozinho e derrubar a produção.
+- Ao desligar (`SIGTERM`), o bot desconecta do Telegram antes de sair, para o
+  próximo deploy não encontrar a conexão antiga aberta.
 
-## Publicação no WhatsApp (opcional)
+## WhatsApp
 
-A publicação no WhatsApp é habilitada apenas quando `WHATSAPP_GROUP_JID` está
-preenchido:
+### Conectar a conta
 
-```env
-WHATSAPP_GROUP_JID=<id>@g.us
-```
-
-A conta do WhatsApp conectada precisa participar desse grupo.
-
-### Login por QR Code
-
-Na primeira execução, um QR Code é exibido no terminal (ou nos logs do
-Docker). No celular, abra o WhatsApp → **Dispositivos conectados** →
-**Conectar dispositivo** e escaneie o código. A sessão é salva em
-`.local/whatsapp-session/` e reutilizada nas próximas execuções.
+Na primeira execução, o log mostra um QR Code. No celular, abra o WhatsApp →
+**Dispositivos conectados** → **Conectar dispositivo** e escaneie.
 
 Se o QR Code ficar grande demais para escanear (comum no painel de logs do
 Railway), defina `WHATSAPP_PAIRING_PHONE`. O log passa a mostrar um código como
 `ABCD-EFGH`: no celular, vá em **Dispositivos conectados** → **Conectar
 dispositivo** → **Conectar com número de telefone** e digite o código.
 
-### Comportamento
+A sessão fica em `.local/whatsapp-session/` e é reaproveitada nos reinícios,
+desde que essa pasta esteja num volume persistente. Cada lugar onde o bot roda
+(seu computador ou o Railway) conecta como um dispositivo separado.
 
-- O WhatsApp conecta em paralelo e nunca bloqueia nem atrasa a leitura e a
-  publicação no Telegram: os envios vão para uma fila própria (até 50
-  pendentes; acima disso, a oferta é publicada só no Telegram).
-- Em quedas de conexão, a reconexão é automática, com espera crescente de 2
-  segundos até 5 minutos.
-- A publicação no WhatsApp é desativada (o Telegram continua normalmente) e o
-  motivo aparece no log nestes casos:
-  - logout da sessão (401);
-  - sessão substituída por outra instância (440), por exemplo local e Docker
-    ao mesmo tempo;
-  - conexão recusada pelo WhatsApp (403);
-  - sessão incompatível (411).
-- Para logout ou sessão incompatível, apague `.local/whatsapp-session/` e
-  reinicie para gerar um novo QR Code. Para sessão substituída, deixe apenas
-  uma instância rodando e reinicie.
-- Se o WhatsApp não estiver conectado no momento do envio, a mensagem é
-  ignorada no WhatsApp e registrada no log.
+### Grupo de destino
 
-## Grupos do WhatsApp como origem (opcional)
+Com `WHATSAPP_GROUP_JID` definido, cada oferta publicada no Telegram também é
+enviada a esse grupo. A conta conectada precisa participar dele.
 
-Além dos chats do Telegram, o bot pode ler ofertas de grupos do WhatsApp:
+### Grupos de origem
 
-```env
-WHATSAPP_SOURCE_JIDS=<id1>@g.us,<id2>@g.us
-```
+Com `WHATSAPP_SOURCE_JIDS` definido, as mensagens novas desses grupos passam
+pelo mesmo pipeline do Telegram e são publicadas nos mesmos destinos.
 
-- A conta do WhatsApp conectada precisa ser **membro** desses grupos. Os JIDs
-  aparecem em `npm run whatsapp-groups`.
-- Cada mensagem nova com link do Mercado Livre passa pelo mesmo pipeline do
-  Telegram: texto inteiro (sem os links originais), foto (se houver), link
-  convertido para afiliado e deduplicação de 30 dias. A oferta é publicada no
-  Telegram e, se `WHATSAPP_GROUP_JID` estiver definido, no grupo do WhatsApp.
-- Mensagens enviadas pela própria conta, histórico antigo e mensagens com mais
-  de 15 minutos (ex.: entregues após uma queda longa) são ignorados.
-- O grupo de destino não pode estar na lista de origem (o bot recusa iniciar).
-- Se a publicação no Telegram estiver fora do ar, a oferta é tentada de novo com
-  espera crescente (até 8 vezes). A fila fica em memória: ofertas pendentes se
-  perdem se o processo reiniciar.
-- Use um número dedicado: contas que leem e republicam muito de forma
-  automática correm risco de banimento pelo WhatsApp.
+- A conta conectada precisa ser **membro** dos grupos de origem.
+- **Texto lido:** texto simples, texto com prévia de link, legenda de foto ou
+  vídeo, e mensagens temporárias ou de visualização única.
+- **Links lidos:** com `https://`, sem esquema (`meli.la/abc`) e o link da
+  prévia.
+- **Foto**, nesta ordem:
+  1. a foto anexada;
+  2. a prévia do link em alta qualidade, que é a foto do produto no Mercado
+     Livre;
+  3. a miniatura da prévia, em baixa resolução.
+- Os asteriscos do negrito do WhatsApp (`*R$49*`) são removidos, porque
+  apareceriam literalmente no Telegram.
+- **Mensagens ignoradas:**
+  - as enviadas pela própria conta;
+  - o histórico;
+  - mensagens com mais de 15 minutos (ex.: entregues depois de uma queda
+    longa);
+  - mensagens repetidas.
+- O grupo de destino não pode estar entre as origens. Se estiver, o bot não
+  inicia.
+- **Telegram fora do ar:** a oferta é tentada até 8 vezes, com espera
+  crescente. As mensagens são processadas uma por vez, numa fila em memória de
+  até 200. Se o processo reiniciar, o que estava pendente se perde.
 
-## Execução local
+> Contas que leem e republicam muito de forma automática correm risco de
+> banimento pelo WhatsApp. Use um número dedicado.
 
-Instale as dependências:
+### Reconexão e erros
 
-```powershell
-npm install
-```
+- Em quedas de conexão, o bot reconecta sozinho, com espera crescente de 2 s
+  até 5 min.
+- Nos casos abaixo, o WhatsApp é desativado até o próximo reinício. O
+  Telegram continua normalmente e o motivo aparece no log.
 
-Compile o projeto:
+  | Código | Motivo | O que fazer |
+  |---|---|---|
+  | 401 | Logout no celular | Apague `.local/whatsapp-session/` e conecte de novo |
+  | 440 | Sessão aberta em outra instância | Deixe só uma rodando e reinicie |
+  | 403 | Conexão recusada pelo WhatsApp | Verifique a conta |
+  | 411 | Sessão incompatível | Apague `.local/whatsapp-session/` e conecte de novo |
 
-```powershell
-npm run build
-```
+- Se o WhatsApp não estiver conectado na hora do envio, a mensagem é ignorada
+  no WhatsApp e registrada no log. Logo após iniciar, o bot espera até 30 s
+  pela conexão.
 
-Execute em desenvolvimento:
+## Comandos
 
-```powershell
-npm run dev
-```
-
-Execute a versão compilada:
-
-```powershell
-npm start
-```
-
-Rode os testes:
-
-```powershell
-npm test
-```
-
-O endpoint de verificação fica disponível em:
-
-```text
-http://localhost:3000
-```
+| Comando | O que faz |
+|---|---|
+| `npm run dev` | Roda o bot com `tsx` (desenvolvimento). |
+| `npm run build` | Compila para `dist/`. |
+| `npm start` | Roda a versão compilada. |
+| `npm test` | Roda os testes (`node:test`). |
+| `npm run session` | Gera uma nova `TELEGRAM_SOURCE_SESSION` e encerra. |
+| `npm run whatsapp-groups` | Conecta o WhatsApp, lista os grupos da conta com o JID de cada um e encerra (não usa o Telegram). |
 
 ## Health check
 
 `GET /health` responde:
 
-- `200` com `{"telegram":"ok"}` se o Telegram foi lido com sucesso nos
+- `200 {"telegram":"ok"}` se as origens do Telegram foram lidas com sucesso nos
   últimos 3 minutos;
-- `503` com `{"telegram":"indisponível"}` caso contrário (inclusive durante a
-  inicialização).
+- `503 {"telegram":"indisponível"}` caso contrário, inclusive durante a
+  inicialização.
 
-O `Dockerfile` usa esse endpoint no `HEALTHCHECK`. Se a inicialização do
-Telegram falhar, o processo encerra com código `1` para que o Docker ou o
-Railway o reinicie.
+O `HEALTHCHECK` do `Dockerfile` usa esse endpoint. Se a inicialização do
+Telegram falhar, ou se a sessão for invalidada, o processo encerra com código
+`1` para o Docker ou o Railway reiniciar.
 
-## Execução com Docker
-
-A imagem usa build multi-stage com `node:22-slim` e roda como o usuário
-`node`, sem privilégios de root.
-
-O `docker-compose.yml` publica a porta interna `3000` na porta `3001` do
-computador:
-
-```yaml
-ports:
-  - "3001:3000"
-```
-
-Inicie ou recrie o serviço:
-
-```powershell
-docker compose up --build -d
-```
-
-Verifique o status (a coluna de status mostra `healthy` quando o `/health`
-responde 200):
-
-```powershell
-docker compose ps
-```
-
-A aplicação estará disponível em:
+Uma inicialização normal mostra no log:
 
 ```text
-http://localhost:3001
-http://localhost:3001/health
-```
-
-Acompanhe os logs (é aqui que aparece o QR Code do WhatsApp):
-
-```powershell
-docker compose logs -f promoliza-bot
-```
-
-Uma inicialização bem-sucedida deve mostrar mensagens semelhantes a:
-
-```text
-[HTTP] Servidor Web ativo na porta 3000
+🌐 [HTTP] Servidor Web ativo na porta 3000
+[WhatsAppSource] Monitorando 1 grupo(s) de origem.
 [TelegramSource] Conectado.
-[TelegramSource] Monitorando 2 chat(s) de origem.
+[TelegramSource] Chat de origem resolvido: @canal (-100...)
+[TelegramSource] Monitorando 1 chat(s) de origem.
+[WhatsApp] Conectado com sucesso.
 ```
 
-Pare o serviço:
+## Docker
+
+A imagem usa build multi-stage com `node:22-slim` e roda como o usuário `node`,
+sem root. O `docker-compose.yml` publica a porta interna `3000` na porta
+`3001` e monta o volume `promoliza_data` em `/app/.local`.
 
 ```powershell
-docker compose down
+docker compose up --build -d          # sobe ou recria
+docker compose ps                     # status (healthy quando /health = 200)
+docker compose logs -f promoliza-bot  # logs, incluindo o QR Code do WhatsApp
+docker compose down                   # para (mantém o volume)
 ```
 
-O container usa `restart: unless-stopped`, portanto pode permanecer ativo e
-ser reiniciado automaticamente se o processo cair. Os logs são rotacionados
-(3 arquivos de até 10 MB). Para funcionamento 24 horas, o computador ou
-servidor que executa o Docker precisa permanecer ligado.
+- `restart: unless-stopped`: o container volta sozinho se cair, e também ao
+  abrir o Docker Desktop. Lembre de
+  [uma sessão, uma instância](#uma-sessão-uma-instância).
+- Logs rotacionados: 3 arquivos de até 10 MB.
+- **Volume:** sem o volume, recriar o container apaga o histórico, o que
+  permite republicar ofertas, e pede o QR Code de novo. Para apagar o volume:
+  `docker volume rm promoliza_data`.
 
-O compose também habilita `stdin_open` e `tty`, o que permite fazer o login do
-Telegram com `docker attach promoliza_app` caso `TELEGRAM_SOURCE_SESSION`
-ainda esteja vazio. Ainda assim, prefira gerar a sessão localmente com
-`npm run dev`.
+## Deploy no Railway
 
-### Volume de dados
+1. Crie um projeto em [railway.com](https://railway.com) com **Deploy from
+   GitHub Repo** e selecione este repositório. O Railway usa o `Dockerfile`.
+2. Configure as variáveis do `.env` em **Variables**, com a
+   `TELEGRAM_SOURCE_SESSION` gerada localmente.
+3. Defina `RAILWAY_DEPLOYMENT_OVERLAP_SECONDS=0` e mantenha **1 réplica**.
+4. Monte um **volume em `/app/.local`**, para manter o histórico e a sessão do
+   WhatsApp entre deploys.
+5. Para conectar o WhatsApp sem QR Code, defina `WHATSAPP_PAIRING_PHONE` e
+   leia o código no log.
+6. Opcional: gere um domínio público e acesse `/health`.
 
-O compose monta o volume nomeado `promoliza_data` em `/app/.local`, onde
-ficam o histórico de produtos e a sessão do WhatsApp. Sem esse volume, recriar
-o container permite republicar ofertas e pede o QR Code novamente.
+Mais detalhes:
 
-`docker compose down` mantém o volume. Para apagá-lo (perdendo histórico e
-sessão do WhatsApp):
+- Cada push no branch conectado (ex.: `main`) gera um deploy automático.
+- Mudar uma variável reinicia o serviço.
+- A sessão do WhatsApp continua no volume, então o reinício não pede um novo
+  pareamento.
 
-```powershell
-docker volume rm promoliza_data
-```
+Use um serviço que mantenha processos rodando continuamente (Railway, VPS
+etc.). Plataformas serverless, como a Vercel, não servem para esta conexão
+permanente.
 
-## Teste do fluxo
+## Regras do processamento
 
-1. Confirme que a conta da sessão está no canal ou grupo de origem.
-2. Confirme que o bot está no grupo de destino com permissão para enviar
-   mensagens.
-3. Execute `docker compose logs -f promoliza-bot`.
-4. Aguarde uma nova publicação com um link do Mercado Livre.
-5. Confirme que a mensagem foi publicada no grupo de destino (e no WhatsApp,
-   se habilitado).
+### Links aceitos
 
-Só são acessados links dos domínios do Mercado Livre ou de encurtadores
-conhecidos (lista `SHORTENER_HOSTS` em `src/services/link.service.ts`).
-Qualquer outro link é ignorado sem ser acessado, e o host é verificado
-novamente a cada redirecionamento. O destino final precisa ser do Mercado
-Livre. Para não manter a comissão de quem postou a oferta, links `meli.la`
-que não redirecionam são ignorados. Quando o link leva à página de afiliado de
-outra pessoa (`/social/<afiliado>?ref=...`), o bot lê a página, identifica o
-produto principal da oferta e publica o link desse produto com a sua tag; se o
-produto não puder ser identificado, a oferta é ignorada.
+- Só são acessados links do Mercado Livre ou dos encurtadores da lista
+  `SHORTENER_HOSTS` (`src/services/link.service.ts`). Qualquer outro link
+  (Amazon, Shopee, Nike...) é ignorado **sem ser acessado**.
+- Os redirecionamentos são seguidos um a um, revalidando o host em cada salto
+  (até 5). O destino final precisa ser do Mercado Livre.
+- Um link `meli.la` que não redireciona é ignorado, para não publicar a
+  comissão de quem criou o link.
+- Uma página de afiliado de outra pessoa (`/social/<afiliado>?ref=...`) é lida
+  para identificar o produto principal. O bot publica o link desse produto com
+  a sua tag. Se o produto não for identificado, a oferta é ignorada.
 
-Se o Telegram estiver indisponível para publicar (rede, erro 5xx, limite de
-envio, token ou permissão do bot), a leitura é pausada e retomada depois, com
-espera crescente de até 5 minutos, sem descartar nenhuma oferta. Só uma
-mensagem que o próprio Telegram rejeita pelo conteúdo é descartada (com
-registro no log).
+### Texto e foto
 
-Produtos já publicados nos últimos 30 dias também não são enviados novamente.
-A duplicidade é verificada pelo ID MLB do produto, antes de encurtar o link,
-então o mesmo produto vindo de grupos ou encurtadores diferentes conta como
-repetido.
+- **Texto publicado:** a mensagem original inteira, sem os links (com e sem
+  `http`, incluindo `t.me/...` e `chat.whatsapp.com/...`) e sem as linhas que
+  sobrariam só com um rótulo. No fim vai `🛒 Acessar oferta: <link>`.
+- **Limites do Telegram:**
+  - com foto, a legenda tem até 1024 caracteres;
+  - sem foto, o texto tem até 4096 caracteres;
+  - se passar do limite, só o texto da origem é cortado (com `…`). O link
+    nunca é cortado.
+- **Foto recusada:** se o Telegram recusar a foto, a oferta sai só com o texto.
+- **No WhatsApp:** a oferta vai com o texto de até 4096 caracteres, com ou sem
+  foto.
 
-Antes da republicação, os links da mensagem original são removidos para evitar
-que links de outros canais sejam enviados ao grupo de destino. O link afiliado
-final é encurtado pelo is.gd; se o encurtador estiver indisponível, publica o
-link afiliado completo.
+### Repetição
 
-## Persistência e produção
+- Um produto publicado não é republicado por **30 dias**.
+- A chave usada para reconhecer o produto é:
+  - o ID MLB, quando existe;
+  - senão, a URL sem os parâmetros de rastreio.
+- O mesmo produto vindo de grupos, origens ou encurtadores diferentes conta
+  como repetido.
+- A repetição é verificada antes de encurtar o link e baixar a foto.
+- O histórico fica em `.local/posted-products.json`. Ele não é um banco de
+  dados: para várias instâncias, migre para PostgreSQL ou Redis.
 
-O histórico de produtos enviados é salvo em:
+### Falhas
 
-```text
-.local/posted-products.json
-```
-
-Esse diretório está no `.gitignore` e no `.dockerignore`. Em servidores ou
-plataformas como Railway, monte um volume persistente em `/app/.local`; sem
-isso, um novo deploy pode apagar o histórico (permitindo republicações) e a
-sessão do WhatsApp.
-
-O histórico local não é um banco de dados e a fila de processamento não é
-persistente. Para um ambiente de produção com múltiplas instâncias ou
-reinícios frequentes, migre o histórico e a fila para PostgreSQL ou Redis.
-
-### Deploy no Railway
-
-O projeto pode ser publicado como um serviço Docker no Railway:
-
-1. Crie um projeto em [railway.com](https://railway.com) e escolha **Deploy
-   from GitHub Repo**.
-2. Selecione este repositório. O Railway detectará o `Dockerfile`.
-3. Configure as variáveis do `.env` em **Variables**, incluindo
-   `TELEGRAM_SOURCE_SESSION` já gerada localmente. Não versione o `.env`.
-4. Gere um domínio público e acesse `/health` para verificar o serviço.
-5. Configure um volume montado em `/app/.local` para manter o histórico e a
-   sessão do WhatsApp entre reinícios.
-
-O Railway fornece a variável `PORT` automaticamente. O serviço já escuta essa
-porta, portanto não é necessário fixar `PORT=3000` no ambiente de produção.
-
-Para hospedar o processo continuamente, prefira uma VPS, Railway ou outro
-serviço que mantenha processos de longa duração. Plataformas serverless, como
-a Vercel, não são a escolha adequada para esta conexão permanente com o
-Telegram.
+- **Telegram indisponível para publicar** (rede, 5xx, limite de envio, token
+  ou permissão do bot): a leitura pausa com espera crescente (15 s até 5 min,
+  ou o tempo pedido pelo Telegram). Nada é descartado.
+- **FloodWait na leitura:** pausa pelo tempo indicado pelo Telegram.
+- **Erro na própria mensagem:** até 10 tentativas, depois ela é descartada.
+  Uma mensagem que o Telegram rejeita pelo conteúdo é descartada na hora, com
+  registro no log.
+- **Encurtador (is.gd) indisponível:** publica o link afiliado completo.
 
 ## Segurança
 
-- Nunca versione o arquivo `.env`.
-- Nunca compartilhe `TELEGRAM_SOURCE_SESSION`: ela dá acesso total à conta.
+- Nunca versione o `.env` nem a pasta `.local/`.
+- `TELEGRAM_SOURCE_SESSION` e `.local/whatsapp-session/` dão **acesso total**
+  às contas. Não compartilhe.
 - Nunca compartilhe `TELEGRAM_BOT_TOKEN` ou `TELEGRAM_API_HASH`.
-- Nunca compartilhe nem versione `.local/whatsapp-session/`: quem tiver esses
-  arquivos pode enviar mensagens pela sua conta do WhatsApp.
-- Se alguma credencial do Telegram for exposta, revogue o token no BotFather,
-  gere um novo API Hash em [my.telegram.org](https://my.telegram.org) e crie
-  uma nova sessão da conta do Telegram.
-- Se a sessão do WhatsApp for exposta, desconecte o aparelho em WhatsApp →
-  **Dispositivos conectados**, apague `.local/whatsapp-session/` e escaneie um
-  novo QR Code.
-- Os erros registrados no log ocultam o token do bot.
+- Se alguma credencial do Telegram vazar:
+  1. revogue o token no BotFather;
+  2. gere um novo API Hash em [my.telegram.org](https://my.telegram.org);
+  3. gere uma nova sessão com `npm run session`.
+- Se a sessão do WhatsApp vazar:
+  1. desconecte o aparelho em **Dispositivos conectados**;
+  2. apague `.local/whatsapp-session/`;
+  3. conecte de novo.
+- Os logs ocultam o token do bot. A sessão do Telegram só é impressa ao ser
+  gerada num terminal interativo, nunca nos logs de produção.
 
 ## Palavras-chave
 

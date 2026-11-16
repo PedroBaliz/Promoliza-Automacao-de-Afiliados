@@ -1,7 +1,7 @@
 // Baileys é um pacote ESM e só é carregado quando o WhatsApp está habilitado.
 // Com "module": "CommonJS", o TypeScript compila o import() abaixo para require(),
 // o que exige Node >= 22.12 (require de ESM sem flag).
-import type { WASocket, WAVersion } from '@whiskeysockets/baileys';
+import type { WAMessage, WASocket, WAVersion } from '@whiskeysockets/baileys';
 import type { Boom } from '@hapi/boom';
 import path from 'path';
 import fs from 'fs';
@@ -20,6 +20,9 @@ const SEND_TIMEOUT_MS = 30_000;
 const VERSION_FETCH_TIMEOUT_MS = 10_000;
 const RECONNECT_BASE_MS = 2_000;
 const RECONNECT_MAX_MS = 5 * 60_000;
+const MEDIA_DOWNLOAD_TIMEOUT_MS = 60_000;
+
+export type SourceMessageHandler = (message: WAMessage) => void;
 
 export class WhatsAppProvider {
   private baileys: Baileys | null = null;
@@ -32,20 +35,36 @@ export class WhatsAppProvider {
   private reconnectTimer: NodeJS.Timeout | undefined;
   private readonly connectionReady: Promise<void>;
   private resolveReady!: () => void;
+  private sourceHandler: SourceMessageHandler | null = null;
+  private readonly sourceJids: Set<string>;
 
-  constructor(private readonly groupJid: string = config.whatsapp.groupJid) {
+  constructor(
+    private readonly groupJid: string = config.whatsapp.groupJid,
+    sourceJids: string[] = config.whatsapp.sourceJids,
+  ) {
+    this.sourceJids = new Set(sourceJids);
     this.connectionReady = new Promise((resolve) => {
       this.resolveReady = resolve;
     });
   }
 
+  /** Conecta se houver grupo de destino ou grupos de origem configurados. */
   get enabled(): boolean {
+    return Boolean(this.groupJid) || this.sourceJids.size > 0;
+  }
+
+  get publishEnabled(): boolean {
     return Boolean(this.groupJid);
   }
 
+  /** Recebe as mensagens novas dos grupos de WHATSAPP_SOURCE_JIDS (exceto as enviadas por esta conta). */
+  onSourceMessage(handler: SourceMessageHandler): void {
+    this.sourceHandler = handler;
+  }
+
   async start(): Promise<void> {
-    if (!this.groupJid) {
-      throw new Error('Configure WHATSAPP_GROUP_JID no .env para usar o WhatsAppProvider.');
+    if (!this.enabled) {
+      throw new Error('Configure WHATSAPP_GROUP_JID ou WHATSAPP_SOURCE_JIDS no .env para usar o WhatsAppProvider.');
     }
     this.startedAt = Date.now();
     fs.mkdirSync(SESSION_DIR, { recursive: true });
@@ -86,6 +105,19 @@ export class WhatsAppProvider {
     let pairingRequested = false;
 
     socket.ev.on('creds.update', saveCreds);
+    socket.ev.on('messages.upsert', ({ messages, type }) => {
+      // "notify" = mensagem nova chegando; "append" é histórico/sincronização e não deve ser republicado.
+      if (socket !== this.socket || type !== 'notify' || !this.sourceHandler) return;
+      for (const message of messages) {
+        const jid = message.key.remoteJid;
+        if (!jid || !this.sourceJids.has(jid) || message.key.fromMe) continue;
+        try {
+          this.sourceHandler(message);
+        } catch (error) {
+          console.error(`❌ [WhatsApp] Erro ao tratar mensagem de origem: ${describeError(error)}`);
+        }
+      }
+    });
     socket.ev.on('connection.update', (update) => {
       // Evento atrasado de um socket antigo não pode mexer no estado do atual.
       if (socket !== this.socket) return;
@@ -176,7 +208,30 @@ export class WhatsAppProvider {
     this.socket = null;
     oldSocket.ev.removeAllListeners('connection.update');
     oldSocket.ev.removeAllListeners('creds.update');
+    oldSocket.ev.removeAllListeners('messages.upsert');
     oldSocket.end(undefined).catch(() => undefined);
+  }
+
+  /** Baixa a imagem de uma mensagem recebida; devolve undefined se não der (a oferta segue sem foto). */
+  async downloadImage(message: WAMessage): Promise<Buffer | undefined> {
+    const socket = this.socket;
+    if (!this.baileys || !socket) return undefined;
+    try {
+      const media = await withTimeout(
+        this.baileys.downloadMediaMessage(
+          message,
+          'buffer',
+          {},
+          { logger: P({ level: 'silent' }), reuploadRequest: socket.updateMediaMessage },
+        ),
+        MEDIA_DOWNLOAD_TIMEOUT_MS,
+        '[WhatsApp] download de mídia',
+      );
+      return Buffer.isBuffer(media) ? media : undefined;
+    } catch (error) {
+      console.warn(`[WhatsApp] Não foi possível baixar a imagem: ${describeError(error)}`);
+      return undefined;
+    }
   }
 
   async sendMessage(text: string, image?: Buffer): Promise<void> {

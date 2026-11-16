@@ -22,6 +22,11 @@ export const config = {
   },
   whatsapp: {
     groupJid: process.env.WHATSAPP_GROUP_JID || '',
+    // Grupos do WhatsApp lidos como origem de ofertas (JIDs <id>@g.us separados por vírgula).
+    sourceJids: (process.env.WHATSAPP_SOURCE_JIDS || '')
+      .split(',')
+      .map((jid) => jid.trim())
+      .filter(Boolean),
     // Número da conta (só dígitos, com DDI): conecta por código de pareamento em vez de QR.
     pairingPhone: (process.env.WHATSAPP_PAIRING_PHONE || '').replace(/\D/g, ''),
   },

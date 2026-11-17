@@ -169,6 +169,16 @@ const MAX_SOCIAL_PAGE_BYTES = 3 * 1024 * 1024;
  */
 export function extractSocialProductUrl(html: string): string | null {
   const text = html.replace(/\\u002F/gi, '/').replace(/\\\//g, '/');
+  return extractCatalogProductUrl(text) ?? extractUserProductUrl(text);
+}
+
+/** Tipo do gatilho da página /social/ (para log quando o produto não é identificado). */
+export function socialTriggerType(html: string): string | null {
+  return html.match(/"trigger":\{"trigger_type":"([^"]+)"/)?.[1] ?? null;
+}
+
+// Gatilho "product": produto de catálogo, link /p/MLB<id> (ou anúncio MLB-<id>).
+function extractCatalogProductUrl(text: string): string | null {
   const trigger = text.match(/"trigger":\{"trigger_type":"product","item_info":\{"id":"MLB(\d+)"/);
   if (!trigger) return null;
 
@@ -178,6 +188,29 @@ export function extractSocialProductUrl(html: string): string | null {
     'i',
   );
   return text.match(productLink)?.[0] ?? null;
+}
+
+/**
+ * Gatilho "user_product": produto de vendedor, link /<slug>/up/MLBU<id>. O anúncio exato
+ * (com o preço da oferta) vem em pdp_filters=item_id:MLB<id>, que é mantido; o resto da
+ * query e o fragmento são rastreio de quem postou e ficam de fora.
+ */
+function extractUserProductUrl(text: string): string | null {
+  const trigger = text.match(
+    /"trigger":\{"trigger_type":"user_product","item_info":\{"id":"MLB(\d+)"[^{}]*\}(?:,"product_info":\{[^{}]*\})?,"user_product_info":\{"id":"MLBU(\d+)"/,
+  );
+  if (!trigger) return null;
+
+  const [, itemDigits, userProductDigits] = trigger;
+  const productPath = text.match(
+    new RegExp(
+      `https://(?:www\\.)?mercadolivre\\.com\\.br/[^"'\\s<>?#]*?/up/MLBU${userProductDigits}(?![\\d])`,
+      'i',
+    ),
+  )?.[0];
+  if (!productPath) return null;
+
+  return `${productPath}?pdp_filters=${encodeURIComponent(`item_id:MLB${itemDigits}`)}`;
 }
 
 async function fetchSocialProductUrl(socialUrl: URL): Promise<string | null> {
@@ -190,7 +223,12 @@ async function fetchSocialProductUrl(socialUrl: URL): Promise<string | null> {
       headers: { 'User-Agent': BROWSER_USER_AGENT, 'Accept-Language': 'pt-BR' },
       validateStatus: (status) => status >= 200 && status < 300,
     });
-    return extractSocialProductUrl(String(response.data));
+    const html = String(response.data);
+    const productUrl = extractSocialProductUrl(html);
+    if (!productUrl) {
+      console.log(`[Link] Página de afiliado sem produto reconhecido (gatilho=${socialTriggerType(html) ?? 'nenhum'}).`);
+    }
+    return productUrl;
   } catch (error) {
     console.log(`[Link] Falha ao ler a página de afiliado: ${describeError(error)}`);
     return null;

@@ -48,7 +48,8 @@ Peças usadas:
   órfãos (`🔗 Link:`). O link afiliado encurtado (is.gd) vai no fim.
 - Foto da oferta: a foto original da mensagem. Nas mensagens do WhatsApp sem
   foto anexada, é usada a prévia do link (a foto do produto no Mercado Livre).
-- Um mesmo produto não é republicado por 30 dias, venha de qualquer origem.
+- Um mesmo produto não é republicado no mesmo dia (horário de Brasília), venha
+  de qualquer origem. No dia seguinte, pode sair de novo.
 - O WhatsApp nunca bloqueia nem atrasa o Telegram.
 - Endpoint `/health` para o Docker e o Railway.
 
@@ -68,7 +69,7 @@ Peças usadas:
                                |
              1. resolve o link (só hosts permitidos)
              2. descarta o que não é Mercado Livre
-             3. descarta repetidos (30 dias)
+             3. descarta repetidos (mesmo dia)
              4. aplica a tag de afiliado e encurta (is.gd)
              5. pega a foto da mensagem
                                |
@@ -430,7 +431,9 @@ permanente.
 
 ### Repetição
 
-- Um produto publicado não é republicado por **30 dias**.
+- Um produto publicado não é republicado **no mesmo dia**, contado pelo
+  calendário de Brasília (`America/Sao_Paulo`). A partir de 00:00 do dia
+  seguinte, ele pode sair de novo.
 - A chave usada para reconhecer o produto é:
   - o ID MLB, quando existe;
   - senão, a URL sem os parâmetros de rastreio.

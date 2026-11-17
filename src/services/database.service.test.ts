@@ -9,12 +9,14 @@ import path from 'path';
 const originalCwd = process.cwd();
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'promoliza-db-'));
 const storageFile = path.join(tempDir, '.local', 'posted-products.json');
-const DAY = 24 * 60 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
 let DatabaseService: typeof import('./database.service').DatabaseService;
+let dayKey: typeof import('./database.service').dayKey;
 
 before(async () => {
   process.chdir(tempDir);
-  ({ DatabaseService } = await import('./database.service'));
+  ({ DatabaseService, dayKey } = await import('./database.service'));
 });
 
 after(() => {
@@ -62,21 +64,49 @@ describe('DatabaseService', () => {
     assert.equal(fs.existsSync(`${storageFile}.tmp`), false);
   });
 
-  test('entradas com mais de 30 dias são descartadas na carga', () => {
-    writeStorage({ products: { velho: Date.now() - 31 * DAY, novo: Date.now() - 1 * DAY } });
+  test('na carga, só valem os produtos enviados hoje (horário de Brasília)', (t) => {
+    const now = Date.UTC(2026, 10, 17, 15, 0); // 17/11 12:00 em Brasília
+    t.mock.method(Date, 'now', () => now);
+    writeStorage({
+      products: {
+        ontem: now - 13 * HOUR, // 16/11 23:00 em Brasília
+        hoje: now - 11 * HOUR, // 17/11 01:00 em Brasília
+        mes_passado: now - 30 * DAY,
+      },
+    });
     const db = new DatabaseService();
-    assert.equal(db.hasBeenSent('velho'), false);
-    assert.equal(db.hasBeenSent('novo'), true);
+    assert.equal(db.hasBeenSent('ontem'), false);
+    assert.equal(db.hasBeenSent('mes_passado'), false);
+    assert.equal(db.hasBeenSent('hoje'), true);
   });
 
-  test('entrada que expira durante a execução deixa de contar e é removida do arquivo', (t) => {
-    const start = Date.now();
-    const now = t.mock.method(Date, 'now', () => start);
+  test('bloqueia até 23:59 do mesmo dia e libera a partir de 00:00 do dia seguinte', (t) => {
+    const sentAt = Date.UTC(2026, 10, 18, 2, 50); // 17/11 23:50 em Brasília
+    const now = t.mock.method(Date, 'now', () => sentAt);
     const db = new DatabaseService();
-    db.markAsSent('expira');
-    now.mock.mockImplementation(() => start + 30 * DAY);
-    assert.equal(db.hasBeenSent('expira'), false);
-    assert.equal('expira' in readStorage().products, false);
+    db.markAsSent('produto');
+
+    now.mock.mockImplementation(() => Date.UTC(2026, 10, 18, 2, 59)); // 17/11 23:59
+    assert.equal(db.hasBeenSent('produto'), true);
+
+    now.mock.mockImplementation(() => Date.UTC(2026, 10, 18, 3, 1)); // 18/11 00:01
+    assert.equal(db.hasBeenSent('produto'), false);
+    assert.equal('produto' in readStorage().products, false);
+  });
+
+  test('ao salvar, remove do arquivo os produtos de dias anteriores', (t) => {
+    const day1 = Date.UTC(2026, 10, 17, 15, 0);
+    const now = t.mock.method(Date, 'now', () => day1);
+    const db = new DatabaseService();
+    db.markAsSent('ontem');
+    now.mock.mockImplementation(() => day1 + DAY);
+    db.markAsSent('hoje');
+    assert.deepEqual(Object.keys(readStorage().products), ['hoje']);
+  });
+
+  test('dayKey usa o fuso de Brasília', () => {
+    assert.equal(dayKey(Date.UTC(2026, 10, 18, 2, 59)), '2026-11-17');
+    assert.equal(dayKey(Date.UTC(2026, 10, 18, 3, 0)), '2026-11-18');
   });
 
   test('timestamps inválidos são ignorados', () => {

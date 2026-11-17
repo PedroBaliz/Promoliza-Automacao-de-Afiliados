@@ -7,7 +7,23 @@ type StoredProducts = {
   productIds?: string[];
 };
 
-const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+// Um produto não é republicado no mesmo dia (calendário de Brasília); no dia seguinte, pode de novo.
+const TIME_ZONE = 'America/Sao_Paulo';
+const dayFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+/** Dia no fuso de Brasília, como "2026-11-17". */
+export function dayKey(timestamp: number): string {
+  return dayFormatter.format(new Date(timestamp));
+}
+
+function isSameDay(timestamp: number, now: number): boolean {
+  return dayKey(timestamp) === dayKey(now);
+}
 
 export class DatabaseService {
   private sentProducts = new Map<string, number>();
@@ -25,7 +41,7 @@ export class DatabaseService {
 
       if (parsed.products && typeof parsed.products === 'object') {
         for (const [id, timestamp] of Object.entries(parsed.products)) {
-          if (typeof timestamp === 'number' && now - timestamp < RETENTION_MS) {
+          if (typeof timestamp === 'number' && isSameDay(timestamp, now)) {
             this.sentProducts.set(id, timestamp);
           }
         }
@@ -57,7 +73,7 @@ export class DatabaseService {
   isProductPosted(productId: string): boolean {
     const timestamp = this.sentProducts.get(productId);
     if (timestamp === undefined) return false;
-    if (Date.now() - timestamp >= RETENTION_MS) {
+    if (!isSameDay(timestamp, Date.now())) {
       this.sentProducts.delete(productId);
       this.persistProducts();
       return false;
@@ -66,7 +82,12 @@ export class DatabaseService {
   }
 
   savePostedProduct(productId: string): void {
-    this.sentProducts.set(productId, Date.now());
+    const now = Date.now();
+    // Remove os de dias anteriores para o arquivo não crescer sem limite.
+    for (const [id, timestamp] of this.sentProducts) {
+      if (!isSameDay(timestamp, now)) this.sentProducts.delete(id);
+    }
+    this.sentProducts.set(productId, now);
     this.persistProducts();
   }
 

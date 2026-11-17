@@ -10,7 +10,7 @@ Bot TypeScript/Node (CommonJS, Node >= 22.12) que lê grupos do Telegram com uma
 link do produto, dedup pelo ID MLB), aplica a tag de afiliado (`src/utils/affiliate.ts`) e publica
 pelo **bot** do Telegram (`src/providers/telegram.provider.ts`, canal principal) e, opcionalmente, no
 WhatsApp via Baileys (`src/providers/whatsapp.provider.ts`, fila própria, nunca bloqueia o Telegram).
-Histórico de 30 dias em `.local/posted-products.json`. Produção no Railway (projeto
+Histórico do dia (Brasília) em `.local/posted-products.json`. Produção no Railway (projeto
 `robust-strength`, serviço `Promoliza`, deploy automático a cada merge no `main`).
 
 ## Mapa de especialistas

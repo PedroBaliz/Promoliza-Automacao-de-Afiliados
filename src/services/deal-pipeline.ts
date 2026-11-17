@@ -43,7 +43,7 @@ export async function publishDeals(candidate: DealCandidate, sink: DealSink): Pr
 
     // Checa a duplicidade antes de encurtar e baixar a mídia, para não gastar requisições.
     if (seenKeys.has(deal.dedupKey) || sink.isAlreadyPosted(deal.dedupKey)) {
-      console.log(`[Promoliza] Oferta ignorada: ${deal.dedupKey} já enviada nos últimos 30 dias.`);
+      console.log(`[Promoliza] Oferta ignorada: ${deal.dedupKey} já enviada hoje.`);
       continue;
     }
     seenKeys.add(deal.dedupKey);

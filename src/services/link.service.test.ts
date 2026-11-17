@@ -363,6 +363,24 @@ describe('extractSocialProductUrl', () => {
     );
   });
 
+  test('produto de vendedor (user_product): link /up/ só com o filtro do anúncio, sem rastreio', () => {
+    const html =
+      '"trigger":{"trigger_type":"user_product","item_info":{"id":"MLB5305318535","category_id":"MLB23332","domain_id":"MLB-SNEAKERS"},"product_info":{},"user_product_info":{"id":"MLBU5295162027"}},' +
+      '"recommended_items":[{"id":"MLB6078855048"}] ' +
+      '"https:\\u002F\\u002Fwww.mercadolivre.com.br\\u002Foutro-tenis\\u002Fup\\u002FMLBU3454593793?pdp_filters=item_id%3AMLB6078855048" ' +
+      '"https://www.mercadolivre.com.br/tenis-fila-spry/up/MLBU5295162027?pdp_filters=item_id%3AMLB5305318535&matt_event_ts=1&matt_tool_id=61691552#reco_id=x"';
+    assert.equal(
+      extractSocialProductUrl(html),
+      'https://www.mercadolivre.com.br/tenis-fila-spry/up/MLBU5295162027?pdp_filters=item_id%3AMLB5305318535',
+    );
+  });
+
+  test('produto de vendedor sem o link na página retorna null', () => {
+    const html =
+      '"trigger":{"trigger_type":"user_product","item_info":{"id":"MLB1"},"product_info":{},"user_product_info":{"id":"MLBU2"}}';
+    assert.equal(extractSocialProductUrl(html), null);
+  });
+
   test('sem gatilho de produto retorna null', () => {
     assert.equal(extractSocialProductUrl('<html>sem dados</html>'), null);
   });

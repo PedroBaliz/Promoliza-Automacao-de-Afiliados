@@ -82,6 +82,57 @@ function compact(text: string): string {
   return text.replace(/\n{2}/g, '\n');
 }
 
+describe('renderSourceCaption: link de afiliado no lugar do original', () => {
+  const SLOT = '⟦LINK⟧';
+
+  test('o link da oferta vira o marcador na mesma linha do original', () => {
+    const text = 'Cadeira NR17\n🤑 Por: R$ 319\n\n🛒 Compre aqui: https://meli.la/26PnKf4\n\n⏳ oferta';
+    const entities = [urlEntity(text, 'https://meli.la/26PnKf4')];
+    const template = mod.tokenizeLinks(text, entities);
+    assert.equal(
+      mod.renderSourceCaption(template, 'https://meli.la/26PnKf4'),
+      `Cadeira NR17\n🤑 Por: R$ 319\n\n🛒 Compre aqui: ${SLOT}\n\n⏳ oferta`,
+    );
+  });
+
+  test('mantém o 👉 quando o link continua na linha (com e sem https)', () => {
+    const a = mod.tokenizeLinks('Perfume\n🛒 Achado no Mercado Livre 👉 https://meli.la/abc');
+    assert.equal(mod.renderSourceCaption(a, 'https://meli.la/abc'), `Perfume\n🛒 Achado no Mercado Livre 👉 ${SLOT}`);
+    const b = mod.tokenizeLinks('Kit\n👉 meli.la/xyz');
+    assert.equal(mod.renderSourceCaption(b, 'https://meli.la/xyz'), `Kit\n👉 ${SLOT}`);
+  });
+
+  test('com dois links, cada oferta mostra só o seu e a linha do outro sai', () => {
+    const text = 'Camiseta\n\nPreto: https://meli.la/AAA\nVerde: https://meli.la/BBB\n\n⏳ oferta';
+    const entities = [urlEntity(text, 'https://meli.la/AAA'), urlEntity(text, 'https://meli.la/BBB')];
+    const template = mod.tokenizeLinks(text, entities);
+    assert.equal(mod.renderSourceCaption(template, 'https://meli.la/AAA'), `Camiseta\n\nPreto: ${SLOT}\n\n⏳ oferta`);
+    assert.equal(mod.renderSourceCaption(template, 'https://meli.la/BBB'), `Camiseta\n\nVerde: ${SLOT}\n\n⏳ oferta`);
+  });
+
+  test('link que não aparece no texto (botão, link escondido) não gera marcador', () => {
+    const template = mod.tokenizeLinks('Fone por R$ 99\nhttps://meli.la/visivel');
+    assert.equal(mod.renderSourceCaption(template, 'https://meli.la/botao'), 'Fone por R$ 99');
+  });
+});
+
+describe('removeLinksFromSourceText: emoji que apontava para o link', () => {
+  test('tira o 👉 que fica no fim da linha sem o link', () => {
+    const text = 'Perfume 100ml\nDe R$819 | Por R$499 💵\n\n🛒 Achado no Mercado Livre 👉 https://meli.la/1kH7RME';
+    assert.equal(mod.removeLinksFromSourceText(text), 'Perfume 100ml\nDe R$819 | Por R$499 💵\n\n🛒 Achado no Mercado Livre');
+  });
+
+  test('tira a linha que sobra só com emoji', () => {
+    const text = 'Perfume 100ml\n🛒 Achado no Mercado Livre\n👉🏻\nhttps://meli.la/1kH7RME';
+    assert.equal(mod.removeLinksFromSourceText(text), 'Perfume 100ml\n🛒 Achado no Mercado Livre');
+  });
+
+  test('mantém emoji que não aponta para link e linhas com texto', () => {
+    const text = 'Body Spray 250ml 🔥\nPor R$165 💵\n👉 Cupom: BLACK30\nhttps://meli.la/x';
+    assert.equal(mod.removeLinksFromSourceText(text), 'Body Spray 250ml 🔥\nPor R$165 💵\n👉 Cupom: BLACK30');
+  });
+});
+
 describe('removeLinksFromSourceText', () => {
   test('remove URL com esquema e preserva o resto', () => {
     const result = mod.removeLinksFromSourceText('Fone Bluetooth por R$ 99,90\nhttps://meli.la/abc\nCupom: PROMO10');

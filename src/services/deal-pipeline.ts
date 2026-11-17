@@ -1,3 +1,4 @@
+import { LINK_SLOT } from '../utils/caption';
 import { resolveMercadoLivreLink, shortenUrl } from './link.service';
 
 export interface Deal {
@@ -16,8 +17,11 @@ export interface DealSink {
 export interface DealCandidate {
   /** URLs encontradas na mensagem de origem (qualquer loja; só as do Mercado Livre viram oferta). */
   rawUrls: string[];
-  /** Texto da mensagem de origem já sem os links. */
-  sourceCaption: string;
+  /**
+   * Texto da mensagem de origem para a oferta deste link: os outros links saem e o deste
+   * vira LINK_SLOT (onde o link de afiliado vai entrar) quando aparece no texto.
+   */
+  renderCaption: (rawUrl: string) => string;
   /** Baixa a imagem da mensagem só quando há oferta nova para publicar. */
   loadImage: () => Promise<Buffer | undefined>;
   /** Prefixo dos logs, ex.: "[TelegramSource]". */
@@ -29,7 +33,7 @@ export interface DealCandidate {
  * converte para afiliado, encurta e publica a mensagem inteira com o link convertido.
  */
 export async function publishDeals(candidate: DealCandidate, sink: DealSink): Promise<void> {
-  const { rawUrls, sourceCaption, loadImage, logTag } = candidate;
+  const { rawUrls, renderCaption, loadImage, logTag } = candidate;
   const seenKeys = new Set<string>();
   let image: Buffer | undefined;
   let imageLoaded = false;
@@ -55,6 +59,12 @@ export async function publishDeals(candidate: DealCandidate, sink: DealSink): Pr
     }
     console.log(
       `${logTag} Link do Mercado Livre encontrado; mídia=${image ? `${image.length} bytes` : 'não encontrada'}.`,
+    );
+    const sourceCaption = renderCaption(rawUrl);
+    // Fim do texto que vai ser publicado, com as quebras de linha visíveis (\n), para conferir a formatação.
+    console.log(
+      `${logTag} Fim do texto publicado (${sourceCaption.includes(LINK_SLOT) ? 'link no lugar do original' : 'link no fim'}): ` +
+        JSON.stringify(sourceCaption.slice(-150)),
     );
     await sink.publish({ dedupKey: deal.dedupKey, affiliateUrl: shortenedUrl, sourceCaption, image });
   }

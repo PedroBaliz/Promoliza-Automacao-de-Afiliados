@@ -2,11 +2,28 @@
 export const TELEGRAM_CAPTION_LIMIT = 1024;
 export const TELEGRAM_TEXT_LIMIT = 4096;
 
+/** Marca, no texto da origem, onde estava o link da oferta: o link de afiliado entra no lugar. */
+export const LINK_SLOT = '⟦LINK⟧';
+
 /**
- * Monta "texto da oferta + link", cortando só o texto da origem para caber no limite.
- * O link de afiliado fica sempre inteiro no final.
+ * Monta o texto da oferta com o link de afiliado.
+ * - Com LINK_SLOT: o link entra onde estava o link original (mesma formatação da origem).
+ * - Sem LINK_SLOT, ou se não couber no limite: "texto + 🛒 Acessar oferta: link", cortando
+ *   só o texto da origem. O link de afiliado nunca é cortado.
  */
 export function buildCaption(sourceCaption: string, affiliateUrl: string, limit: number): string {
+  if (sourceCaption.includes(LINK_SLOT)) {
+    const inline = sourceCaption.replace(LINK_SLOT, affiliateUrl).replaceAll(LINK_SLOT, '');
+    if (inline.length <= limit) return inline;
+    // Não cabe com o link no meio: tira a linha do link e usa o formato com o link no fim.
+    sourceCaption = sourceCaption
+      .split('\n')
+      .filter((line) => !line.includes(LINK_SLOT))
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
   const suffix = `🛒 Acessar oferta: ${affiliateUrl}`;
   const separator = sourceCaption ? '\n\n' : '';
   const room = limit - suffix.length - separator.length;

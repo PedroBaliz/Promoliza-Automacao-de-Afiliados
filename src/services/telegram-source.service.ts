@@ -5,6 +5,7 @@ import { config } from '../config/env.config';
 import { TelegramPermanentError, TelegramTransientError } from '../providers/telegram.provider';
 import { describeError } from '../utils/errors';
 import { withTimeout } from '../utils/timeout';
+import { LINK_SLOT } from '../utils/caption';
 import { extractUrls } from './link.service';
 import { DealSink, publishDeals } from './deal-pipeline';
 
@@ -26,6 +27,11 @@ const BARE_LINK_PATTERN =
 // Linhas que só sobram como rótulo depois que o link foi removido ("🔗 Link:", "👉 Compre aqui").
 const ORPHAN_LABEL_LINE =
   /^[ \t\p{Extended_Pictographic}️‍:➡-]*(?:link(?: d[ao] (?:oferta|produto))?|compre(?: aqui)?|comprar|acesse(?: aqui)?|clique aqui)[ \t\p{Extended_Pictographic}️‍:➡-]*$/gimu;
+// Emoji que apontava para o link removido ("Achado no Mercado Livre 👉"): sem o link, fica solto no fim da linha.
+const POINTER = String.raw`(?:(?:👉|👇|🔗)\p{Emoji_Modifier}?|[⬇➡↘⤵]️?)`;
+const TRAILING_POINTER = new RegExp(String.raw`[ \t:]*${POINTER}(?:[ \t:]*${POINTER})*[ \t:]*$`, 'gmu');
+// Linha que sobrou só com emoji/símbolos (sem nenhuma letra ou número) depois de tirar o link.
+const SYMBOL_ONLY_LINE = /^[^\p{L}\p{N}\n]+$/gmu;
 
 function prompt(label: string): Promise<string> {
   const terminal = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -96,20 +102,87 @@ export function extractBareLinks(text: string): string[] {
     .map((link) => `https://${link}`);
 }
 
-export function removeLinksFromSourceText(text: string, entities: any[] = []): string {
+/** Texto da origem com cada link visível trocado por um marcador; links[i] é o link do marcador i. */
+export interface LinkTemplate {
+  text: string;
+  links: string[];
+}
+
+// Marcadores em caracteres de uso privado do Unicode: não aparecem em mensagens reais.
+const TOKEN_PATTERN = /\uE000(\d+)\uE001/g;
+// Onde havia o link de outra oferta (removido), para limpar a linha que ficou s\u00F3 com r\u00F3tulo.
+const REMOVED_LINK = '\uE002';
+
+/**
+ * Troca cada link visível do texto por um marcador, guardando o link na mesma forma em que
+ * collectMessageUrls/collectWhatsAppUrls o entregam ao pipeline. Assim cada oferta sabe em que
+ * ponto do texto estava o seu link.
+ */
+export function tokenizeLinks(text: string, entities: any[] = []): LinkTemplate {
+  const links: string[] = [];
+  const token = (url: string) => `\uE000${links.push(url) - 1}\uE001`;
   let result = text;
 
-  // Remove do fim para o começo para os offsets das entidades continuarem válidos.
-  const ranges = urlEntityRanges({ entities }).sort((a, b) => b.offset - a.offset);
-  for (const { offset, length } of ranges) {
-    result = result.slice(0, offset) + result.slice(offset + length);
+  // Links marcados pelo Telegram (MessageEntityUrl): numerados na ordem do texto e trocados
+  // do fim para o começo, para os offsets das entidades continuarem válidos.
+  const marked = urlEntityRanges({ entities })
+    .sort((a, b) => a.offset - b.offset)
+    .map(({ offset, length }) => {
+      const value = text.slice(offset, offset + length).trim();
+      return { offset, length, mark: token(/^https?:\/\//i.test(value) ? value : `https://${value}`) };
+    });
+  for (const { offset, length, mark } of marked.reverse()) {
+    result = result.slice(0, offset) + mark + result.slice(offset + length);
   }
 
-  return result
+  result = result
     .replace(/\[([^\]]*)\]\((?:https?:\/\/)[^\s)]+\)/gi, '$1')
-    .replace(/https?:\/\/[^\s<>()]+/gi, '')
-    .replace(BARE_LINK_PATTERN, '')
+    .replace(/https?:\/\/[^\s<>()\uE000]+/gi, (span) => {
+      const url = extractUrls(span)[0];
+      return url ? token(url) : '';
+    })
+    .replace(BARE_LINK_PATTERN, (span) => {
+      const bare = span.split('\uE000')[0];
+      const rest = span.slice(bare.length);
+      const url = bare.replace(/[.,!?;:'*)\]]+$/, '');
+      return (url ? token(`https://${url}`) : '') + rest;
+    });
+
+  return { text: result, links };
+}
+
+/**
+ * Texto final de uma oferta: o link `targetUrl` (primeira ocorrência) vira LINK_SLOT, onde o
+ * link de afiliado vai entrar; os demais links saem, junto com rótulos e emojis que só
+ * apontavam para eles. Sem `targetUrl` (ou se ele não aparece no texto), todos os links saem.
+ */
+export function renderSourceCaption(template: LinkTemplate, targetUrl?: string): string {
+  let used = false;
+  const text = template.text
+    .replace(TOKEN_PATTERN, (_, index: string) => {
+      if (!used && targetUrl && template.links[Number(index)] === targetUrl) {
+        used = true;
+        return LINK_SLOT;
+      }
+      return REMOVED_LINK;
+    })
+    // Linha que perdeu o link e ficou só com um rótulo ("Verde:", "Cor preta:"): sai inteira.
+    .replace(new RegExp(`^.*${REMOVED_LINK}.*$`, 'gmu'), (line) => {
+      const rest = line.replaceAll(REMOVED_LINK, '').trim();
+      return /^[^\n]{0,40}:$/u.test(rest) ? '' : line.replaceAll(REMOVED_LINK, '');
+    });
+  return cleanupSourceText(text);
+}
+
+export function removeLinksFromSourceText(text: string, entities: any[] = []): string {
+  return renderSourceCaption(tokenizeLinks(text, entities));
+}
+
+function cleanupSourceText(text: string): string {
+  return text
     .replace(ORPHAN_LABEL_LINE, '')
+    .replace(TRAILING_POINTER, '')
+    .replace(SYMBOL_ONLY_LINE, '')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -399,10 +472,11 @@ export class TelegramSourceService {
       return;
     }
 
+    const template = tokenizeLinks(text, message.entities);
     await publishDeals(
       {
         rawUrls,
-        sourceCaption: removeLinksFromSourceText(text, message.entities),
+        renderCaption: (rawUrl) => renderSourceCaption(template, rawUrl),
         loadImage: () => this.downloadImage(message),
         logTag: '[TelegramSource]',
       },

@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCaption, TELEGRAM_CAPTION_LIMIT, TELEGRAM_TEXT_LIMIT } from './caption';
+import { buildCaption, TELEGRAM_CAPTION_LIMIT, TELEGRAM_TEXT_LIMIT, LINK_SLOT } from './caption';
 
 const LINK = 'https://is.gd/abc123';
 const SUFFIX = `🛒 Acessar oferta: ${LINK}`;
@@ -66,5 +66,21 @@ describe('buildCaption: link maior que o limite', () => {
     const longUrl = `https://www.mercadolivre.com.br/p/MLB1?${'x'.repeat(1100)}`;
     const result = buildCaption('Oferta', longUrl, TELEGRAM_CAPTION_LIMIT);
     assert.equal(result, `🛒 Acessar oferta: ${longUrl}`);
+  });
+});
+
+describe('buildCaption: link no lugar do original (LINK_SLOT)', () => {
+  test('o link entra onde estava o original, sem o sufixo "Acessar oferta"', () => {
+    const caption = buildCaption(`Perfume\n🛒 Achado no Mercado Livre 👉 ${LINK_SLOT}\n\n⏳ oferta`, 'https://is.gd/abc', 1024);
+    assert.equal(caption, 'Perfume\n🛒 Achado no Mercado Livre 👉 https://is.gd/abc\n\n⏳ oferta');
+  });
+
+  test('se não couber, tira a linha do link e volta para o link no fim', () => {
+    const body = `${'x'.repeat(60)}\n👉 ${LINK_SLOT}\n${'y'.repeat(60)}`;
+    const caption = buildCaption(body, 'https://is.gd/abc', 100);
+    assert.ok(caption.length <= 100);
+    assert.ok(caption.endsWith('🛒 Acessar oferta: https://is.gd/abc'));
+    assert.ok(!caption.includes(LINK_SLOT));
+    assert.ok(!caption.includes('👉'));
   });
 });

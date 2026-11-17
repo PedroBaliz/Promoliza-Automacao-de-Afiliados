@@ -375,6 +375,24 @@ describe('extractSocialProductUrl', () => {
     );
   });
 
+  test('anúncio comum (item): link MLB-<id> só com a variação, sem rastreio', () => {
+    const html =
+      '"trigger":{"trigger_type":"item","item_info":{"id":"MLB4182420507","category_id":"MLB270216"}},' +
+      '"recommended_items":[{"id":"MLB5501335502"}] ' +
+      '"https://produto.mercadolivre.com.br/MLB-5501335502-outra-calca-_JM?matt_tool_id=1" ' +
+      '"https://produto.mercadolivre.com.br/MLB-4182420507-calca-legging-flare-_JM?searchVariation=185061887340&amp;matt_event_ts=1&amp;matt_tool_id=61691552#reco_id=x"';
+    assert.equal(
+      extractSocialProductUrl(html),
+      'https://produto.mercadolivre.com.br/MLB-4182420507-calca-legging-flare-_JM?searchVariation=185061887340',
+    );
+  });
+
+  test('anúncio comum sem variação fica sem query', () => {
+    const html =
+      '"trigger":{"trigger_type":"item","item_info":{"id":"MLB123456"}} "https://produto.mercadolivre.com.br/MLB-123456-camiseta-_JM#x"';
+    assert.equal(extractSocialProductUrl(html), 'https://produto.mercadolivre.com.br/MLB-123456-camiseta-_JM');
+  });
+
   test('produto de vendedor sem o link na página retorna null', () => {
     const html =
       '"trigger":{"trigger_type":"user_product","item_info":{"id":"MLB1"},"product_info":{},"user_product_info":{"id":"MLBU2"}}';

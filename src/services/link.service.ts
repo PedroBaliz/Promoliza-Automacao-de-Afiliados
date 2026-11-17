@@ -169,7 +169,7 @@ const MAX_SOCIAL_PAGE_BYTES = 3 * 1024 * 1024;
  */
 export function extractSocialProductUrl(html: string): string | null {
   const text = html.replace(/\\u002F/gi, '/').replace(/\\\//g, '/');
-  return extractCatalogProductUrl(text) ?? extractUserProductUrl(text);
+  return extractCatalogProductUrl(text) ?? extractUserProductUrl(text) ?? extractItemUrl(text);
 }
 
 /** Tipo do gatilho da página /social/ (para log quando o produto não é identificado). */
@@ -213,6 +213,27 @@ function extractUserProductUrl(text: string): string | null {
   return `${productPath}?pdp_filters=${encodeURIComponent(`item_id:MLB${itemDigits}`)}`;
 }
 
+/**
+ * Gatilho "item": anúncio comum, link produto.mercadolivre.com.br/MLB-<id>-<nome>-_JM.
+ * Só o searchVariation (cor/tamanho da oferta) é mantido; o resto é rastreio de quem postou.
+ */
+function extractItemUrl(text: string): string | null {
+  const trigger = text.match(/"trigger":\{"trigger_type":"item","item_info":\{"id":"MLB(\d+)"/);
+  if (!trigger) return null;
+
+  const link = text.match(
+    new RegExp(
+      `https://(?:www\\.|produto\\.)?mercadolivre\\.com\\.br/MLB-${trigger[1]}(?![\\d])[^"'\\s<>?#]*(\\?[^"'\\s<>#]*)?`,
+      'i',
+    ),
+  );
+  if (!link) return null;
+
+  const path = link[0].split('?')[0];
+  const variation = link[1]?.match(/[?&](?:amp;)?searchVariation=(\d+)/)?.[1];
+  return variation ? `${path}?searchVariation=${variation}` : path;
+}
+
 async function fetchSocialProductUrl(socialUrl: URL): Promise<string | null> {
   try {
     const response = await axios.get(socialUrl.toString(), {
@@ -226,7 +247,11 @@ async function fetchSocialProductUrl(socialUrl: URL): Promise<string | null> {
     const html = String(response.data);
     const productUrl = extractSocialProductUrl(html);
     if (!productUrl) {
-      console.log(`[Link] Página de afiliado sem produto reconhecido (gatilho=${socialTriggerType(html) ?? 'nenhum'}).`);
+      const blocked = /suspicious-traffic|account-verification/.test(html);
+      console.log(
+        `[Link] Página de afiliado sem produto reconhecido (gatilho=${socialTriggerType(html) ?? 'nenhum'}` +
+          `${blocked ? ', bloqueio anti-robô do Mercado Livre' : ''}): ${socialUrl.pathname}`,
+      );
     }
     return productUrl;
   } catch (error) {

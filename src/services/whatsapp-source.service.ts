@@ -5,7 +5,7 @@ import { describeError } from '../utils/errors';
 import { sleep } from '../utils/timeout';
 import { DealSink, publishDeals } from './deal-pipeline';
 import { extractUrls } from './link.service';
-import { extractBareLinks, removeLinksFromSourceText } from './telegram-source.service';
+import { extractBareLinks, renderSourceCaption, tokenizeLinks } from './telegram-source.service';
 
 // Mensagem mais antiga que isso (ex.: entregue em atraso após uma reconexão longa) não é republicada.
 const MAX_MESSAGE_AGE_MS = 15 * 60_000;
@@ -198,11 +198,12 @@ export class WhatsAppSourceService {
       return;
     }
 
+    const template = tokenizeLinks(stripWhatsAppAsterisks(text));
     try {
       await publishDeals(
         {
           rawUrls,
-          sourceCaption: stripWhatsAppAsterisks(removeLinksFromSourceText(text)),
+          renderCaption: (rawUrl) => renderSourceCaption(template, rawUrl),
           loadImage: () => this.loadImage(message),
           logTag: '[WhatsAppSource]',
         },

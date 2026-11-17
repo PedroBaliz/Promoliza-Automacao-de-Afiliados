@@ -44,8 +44,9 @@ Peças usadas:
   host revalidado a cada redirecionamento (proteção contra SSRF).
 - Conversão para o seu link de afiliado, sempre removendo a afiliação de quem
   postou. Páginas `/social/<afiliado>` são convertidas no link do produto.
-- Texto original republicado **inteiro**, sem os links de origem e sem rótulos
-  órfãos (`🔗 Link:`). O link afiliado encurtado (is.gd) vai no fim.
+- Texto original republicado **inteiro**, com o link afiliado encurtado
+  (is.gd) **no lugar do link original**. Os outros links saem, junto com os
+  rótulos e emojis que ficariam soltos.
 - Foto da oferta: a foto original da mensagem. Nas mensagens do WhatsApp sem
   foto anexada, é usada a prévia do link (a foto do produto no Mercado Livre).
 - Um mesmo produto não é republicado no mesmo dia (horário de Brasília), venha
@@ -417,14 +418,23 @@ permanente.
 
 ### Texto e foto
 
-- **Texto publicado:** a mensagem original inteira, sem os links (com e sem
-  `http`, incluindo `t.me/...` e `chat.whatsapp.com/...`) e sem as linhas que
-  sobrariam só com um rótulo. No fim vai `🛒 Acessar oferta: <link>`.
+- **Texto publicado:** a mensagem original inteira, com o **seu link no lugar
+  do link original**. Exemplo: `🛒 Compre aqui: <link da origem>` vira
+  `🛒 Compre aqui: <seu link>`.
+- **Os outros links saem:**
+  - links com e sem `http`, incluindo `t.me/...` e `chat.whatsapp.com/...`;
+  - a linha que sobra só com um rótulo (`Verde:`, `🔗 Link:`);
+  - o emoji que só apontava para o link (`👉`).
+- **Vários links do Mercado Livre na mesma mensagem:** sai uma oferta para
+  cada link, e cada uma mostra só o próprio link.
+- **Link que não aparece no texto** (botão ou link escondido atrás de uma
+  palavra): o texto vai sem links e no fim vai `🛒 Acessar oferta: <link>`.
 - **Limites do Telegram:**
   - com foto, a legenda tem até 1024 caracteres;
   - sem foto, o texto tem até 4096 caracteres;
-  - se passar do limite, só o texto da origem é cortado (com `…`). O link
-    nunca é cortado.
+  - se a mensagem com o link no meio não couber, a linha do link sai, o link
+    vai para o fim e só o texto da origem é cortado (com `…`). O link nunca é
+    cortado.
 - **Foto recusada:** se o Telegram recusar a foto, a oferta sai só com o texto.
 - **No WhatsApp:** a oferta vai com o texto de até 4096 caracteres, com ou sem
   foto.
